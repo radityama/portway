@@ -1,0 +1,25 @@
+{
+  "name": "@portway/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "prisma:generate": "prisma generate --config prisma.config.ts",
+    "prisma:migrate": "prisma migrate dev --config prisma.config.ts",
+    "prisma:validate": "prisma validate --config prisma.config.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "hono": "4.13.12",
+    "@hono/node-server": "1.19.15"
+  },
+  "devDependencies": {
+    "prisma": "6.19.3",
+    "tsx": "4.23.15",
+    "typescript": "5.9.2"
+  }
+}

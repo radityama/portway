@@ -1,0 +1,815 @@
+openapi: 3.1.0
+info:
+  title: Portway Control Plane API
+  version: 1.0.0
+  description: Control-plane API derived from docs/API.md. This contract manages identity and metadata; it does not carry public application traffic.
+servers:
+  - url: https://api.portway.example.com/api/v1
+  - url: http://localhost:8080/api/v1
+
+tags:
+  - name: Auth
+  - name: Projects
+  - name: Tunnels
+  - name: Domains
+  - name: Relays
+  - name: Logs
+  - name: Metrics
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/SessionResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Session revoked.
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /me:
+    get:
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/MeResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /projects:
+    get:
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/ProjectListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/ProjectResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /projects/{projectId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/ProjectResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Project deleted according to lifecycle policy.
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /tunnels:
+    get:
+      tags: [Tunnels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: projectId
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { $ref: '#/components/schemas/TunnelStatus' }
+        - in: query
+          name: relayId
+          schema: { type: string }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/TunnelListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [Tunnels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTunnelRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/TunnelResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /tunnels/{tunnelId}:
+    parameters:
+      - $ref: '#/components/parameters/TunnelId'
+    get:
+      tags: [Tunnels]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/TunnelResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [Tunnels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Tunnel deleted or transitioned to its terminal lifecycle state.
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /tunnels/{tunnelId}/revoke:
+    post:
+      tags: [Tunnels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TunnelId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          $ref: '#/components/responses/TunnelResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /tunnels/{tunnelId}/connect:
+    post:
+      tags: [Tunnels]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TunnelId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          $ref: '#/components/responses/ConnectResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+        '503':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /domains:
+    get:
+      tags: [Domains]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/DomainListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [Domains]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDomainRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/DomainResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /domains/{domainId}:
+    parameters:
+      - $ref: '#/components/parameters/DomainId'
+    delete:
+      tags: [Domains]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Domain association removed.
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /relays:
+    get:
+      tags: [Relays]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/RelayListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /relays/{relayId}:
+    parameters:
+      - $ref: '#/components/parameters/RelayId'
+    get:
+      tags: [Relays]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/RelayResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /tunnels/{tunnelId}/logs:
+    get:
+      tags: [Logs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TunnelId'
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          $ref: '#/components/responses/LogListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /tunnels/{tunnelId}/metrics:
+    get:
+      tags: [Metrics]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TunnelId'
+      responses:
+        '200':
+          $ref: '#/components/responses/MetricsResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    ProjectId:
+      in: path
+      name: projectId
+      required: true
+      schema: { type: string }
+    TunnelId:
+      in: path
+      name: tunnelId
+      required: true
+      schema: { type: string }
+    DomainId:
+      in: path
+      name: domainId
+      required: true
+      schema: { type: string }
+    RelayId:
+      in: path
+      name: relayId
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: false
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 255
+    Cursor:
+      in: query
+      name: cursor
+      required: false
+      schema: { type: string }
+    Limit:
+      in: query
+      name: limit
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+
+  schemas:
+    Envelope:
+      type: object
+      required: [data, error, meta]
+      properties:
+        data: {}
+        error:
+          anyOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/ApiError'
+        meta:
+          type: object
+          additionalProperties: true
+
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+
+    User:
+      type: object
+      required: [id, email, createdAt]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        displayName: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Session:
+      type: object
+      required: [accessToken, expiresAt]
+      properties:
+        accessToken: { type: string }
+        expiresAt: { type: string, format: date-time }
+
+    Project:
+      type: object
+      required: [id, organizationId, name, slug, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        organizationId: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    TunnelStatus:
+      type: string
+      enum: [CREATED, CONNECTING, CONNECTED, DISCONNECTED, DRAINING, REVOKED]
+
+    TunnelType:
+      type: string
+      enum: [EPHEMERAL, PERSISTENT]
+
+    Tunnel:
+      type: object
+      required:
+        [
+          id,
+          projectId,
+          name,
+          slug,
+          type,
+          status,
+          protocol,
+          localHost,
+          generation,
+          createdAt,
+          updatedAt,
+        ]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        type: { $ref: '#/components/schemas/TunnelType' }
+        status: { $ref: '#/components/schemas/TunnelStatus' }
+        protocol: { type: string, example: http }
+        localHost: { type: string }
+        localPort: { type: integer, nullable: true, minimum: 1, maximum: 65535 }
+        publicHostname: { type: string, nullable: true }
+        relayId: { type: string, nullable: true }
+        generation: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastConnectedAt: { type: string, format: date-time, nullable: true }
+
+    TunnelCredential:
+      type: object
+      required: [id, tunnelId, scope, issuedAt]
+      properties:
+        id: { type: string }
+        tunnelId: { type: string }
+        scope: { type: string }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, nullable: true }
+
+    Domain:
+      type: object
+      required: [id, hostname, status, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        tunnelId: { type: string, nullable: true }
+        hostname: { type: string }
+        status:
+          type: string
+          enum: [PENDING_VERIFICATION, VERIFIED, ACTIVE, DISABLED]
+        verifiedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Relay:
+      type: object
+      required: [id, name, region, hostname, port, protocol, status]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        region: { type: string }
+        hostname: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        protocol: { type: string }
+        status:
+          type: string
+          enum: [HEALTHY, DEGRADED, DRAINING, OFFLINE]
+        lastSeenAt: { type: string, format: date-time, nullable: true }
+
+    CreateProjectRequest:
+      type: object
+      required: [name, slug]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        slug: { type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
+
+    CreateTunnelRequest:
+      type: object
+      required: [projectId, name, type, protocol, localHost]
+      properties:
+        projectId: { type: string }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        slug: { type: string }
+        type: { $ref: '#/components/schemas/TunnelType' }
+        protocol: { type: string, example: http }
+        localHost: { type: string, default: 127.0.0.1 }
+        localPort: { type: integer, minimum: 1, maximum: 65535 }
+
+    CreateDomainRequest:
+      type: object
+      required: [hostname, tunnelId]
+      properties:
+        hostname: { type: string }
+        tunnelId: { type: string }
+
+    LoginRequest:
+      type: object
+      additionalProperties: true
+      description: Authentication mechanism is deployment-specific. OAuth/device-flow fields may be added without changing the core response envelope.
+
+    ConnectAssignment:
+      type: object
+      required: [relay, credential]
+      properties:
+        relay: { $ref: '#/components/schemas/Relay' }
+        credential: { $ref: '#/components/schemas/TunnelCredential' }
+
+    RequestLog:
+      type: object
+      required:
+        [timestamp, method, host, path, status, durationMs, bytesIn, bytesOut]
+      properties:
+        timestamp: { type: string, format: date-time }
+        method: { type: string }
+        host: { type: string }
+        path: { type: string }
+        status: { type: integer }
+        durationMs: { type: integer, minimum: 0 }
+        bytesIn: { type: integer, format: int64, minimum: 0 }
+        bytesOut: { type: integer, format: int64, minimum: 0 }
+
+    TunnelMetrics:
+      type: object
+      properties:
+        activeStreams: { type: integer, minimum: 0 }
+        requests: { type: integer, format: int64, minimum: 0 }
+        bytesIn: { type: integer, format: int64, minimum: 0 }
+        bytesOut: { type: integer, format: int64, minimum: 0 }
+        p95LatencyMs: { type: number, minimum: 0 }
+        p99LatencyMs: { type: number, minimum: 0 }
+
+  responses:
+    ErrorResponse:
+      description: API error.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data: { type: 'null' }
+                  error: { $ref: '#/components/schemas/ApiError' }
+
+    SessionResponse:
+      description: Authenticated session.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      session: { $ref: '#/components/schemas/Session' }
+
+    MeResponse:
+      description: Current user.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user: { $ref: '#/components/schemas/User' }
+
+    ProjectResponse:
+      description: Project response.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      project: { $ref: '#/components/schemas/Project' }
+
+    ProjectListResponse:
+      description: Project list.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      projects:
+                        type: array
+                        items: { $ref: '#/components/schemas/Project' }
+                  meta:
+                    allOf:
+                      - $ref: '#/components/schemas/Envelope/properties/meta'
+
+    TunnelResponse:
+      description: Tunnel response.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tunnel: { $ref: '#/components/schemas/Tunnel' }
+
+    TunnelListResponse:
+      description: Tunnel list.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tunnels:
+                        type: array
+                        items: { $ref: '#/components/schemas/Tunnel' }
+                  meta:
+                    type: object
+                    properties:
+                      nextCursor: { type: string, nullable: true }
+                    additionalProperties: true
+
+    ConnectResponse:
+      description: Relay assignment and short-lived tunnel credential.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      relay: { $ref: '#/components/schemas/Relay' }
+                      credential:
+                        { $ref: '#/components/schemas/TunnelCredential' }
+
+    DomainResponse:
+      description: Domain response.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      domain: { $ref: '#/components/schemas/Domain' }
+
+    DomainListResponse:
+      description: Domain list.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      domains:
+                        type: array
+                        items: { $ref: '#/components/schemas/Domain' }
+                  meta:
+                    type: object
+                    properties:
+                      nextCursor: { type: string, nullable: true }
+                    additionalProperties: true
+
+    RelayResponse:
+      description: Relay detail.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      relay: { $ref: '#/components/schemas/Relay' }
+
+    RelayListResponse:
+      description: Relay list.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      relays:
+                        type: array
+                        items: { $ref: '#/components/schemas/Relay' }
+                  meta:
+                    type: object
+                    properties:
+                      nextCursor: { type: string, nullable: true }
+                    additionalProperties: true
+
+    LogListResponse:
+      description: Metadata-level request logs with sensitive fields redacted.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      logs:
+                        type: array
+                        items: { $ref: '#/components/schemas/RequestLog' }
+                  meta:
+                    type: object
+                    properties:
+                      nextCursor: { type: string, nullable: true }
+                    additionalProperties: true
+
+    MetricsResponse:
+      description: Aggregated dashboard-friendly tunnel metrics.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      metrics: { $ref: '#/components/schemas/TunnelMetrics' }

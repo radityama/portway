@@ -1,0 +1,8 @@
+node_modules/
+.next/
+dist/
+bin/
+.tmp/
+pnpm-lock.yaml
+prisma/schema.prisma
+**/next-env.d.ts

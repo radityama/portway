@@ -1,0 +1,30 @@
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Go
+bin/
+coverage.out
+
+# Node
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# Env
+.env
+.env.*
+!.env.example
+.envrc
+
+# Prisma
+prisma/*.db
+
+# Runtime
+.tmp/
+logs/

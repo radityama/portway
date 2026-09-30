@@ -1,0 +1,17 @@
+{
+  "name": "@portway/sdk",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.9.2"
+  },
+  "dependencies": {
+    "@portway/protocol": "workspace:*"
+  }
+}

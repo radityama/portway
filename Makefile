@@ -1,0 +1,55 @@
+.PHONY: setup dev doctor docker-up docker-down test test-race lint fmt fmt-check typecheck build check integration e2e load-test
+
+setup:
+	node scripts/setup.mjs
+
+dev:
+	node scripts/dev.mjs
+
+doctor:
+	node scripts/doctor.mjs
+
+docker-up:
+	docker compose --env-file .env -f deploy/docker/docker-compose.yml up -d --wait --wait-timeout 60
+
+docker-down:
+	docker compose --env-file .env -f deploy/docker/docker-compose.yml down
+
+test:
+	go test ./...
+	pnpm test
+
+test-race:
+	go test -race ./...
+
+lint:
+	go vet ./...
+	pnpm lint
+
+fmt:
+	gofmt -w cmd internal tests
+	pnpm format
+
+fmt-check:
+	node scripts/check-go-format.mjs
+	pnpm format:check
+
+typecheck:
+	pnpm typecheck
+
+build:
+	mkdir -p bin
+	go build -o bin/portway ./cmd/portway
+	go build -o bin/portway-relay ./cmd/relay
+	pnpm build
+
+check: fmt-check test test-race lint typecheck build
+
+integration:
+	go test ./tests/integration/...
+
+e2e:
+	go test ./tests/e2e/...
+
+load-test:
+	go test ./tests/load/...

@@ -1,8 +1,9 @@
 import { mkdir, access } from 'node:fs/promises';
-import { createConnection, createServer } from 'node:net';
+import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   ensureEnvironment,
@@ -46,6 +47,9 @@ try {
   }
   controller.signal.throwIfAborted();
 
+  await supervisor.run('go', ['run', './cmd/dev-init'], { cwd: root });
+  controller.signal.throwIfAborted();
+
   dependenciesStarted = true;
   await supervisor.run(
     'docker',
@@ -59,7 +63,15 @@ try {
     '.tmp',
     process.platform === 'win32' ? 'portway-relay.exe' : 'portway-relay',
   );
+  const agentPath = join(
+    root,
+    '.tmp',
+    process.platform === 'win32' ? 'portway.exe' : 'portway',
+  );
   await supervisor.run('go', ['build', '-o', relayPath, './cmd/relay'], {
+    cwd: root,
+  });
+  await supervisor.run('go', ['build', '-o', agentPath, './cmd/portway'], {
     cwd: root,
   });
   controller.signal.throwIfAborted();
@@ -75,9 +87,9 @@ try {
     },
   });
 
-  await waitUntilReady(ports, controller.signal);
+  await waitUntilReady(ports, agentPath, controller.signal);
   console.log(
-    `Portway development ready\nAPI       http://127.0.0.1:${ports.API_PORT}/health\nDashboard http://127.0.0.1:${ports.DASHBOARD_PORT}\nRelay     127.0.0.1:${ports.RELAY_PORT} (TCP starter)`,
+    `Portway development ready\nAPI       http://127.0.0.1:${ports.API_PORT}/health\nDashboard http://127.0.0.1:${ports.DASHBOARD_PORT}\nRelay     127.0.0.1:${ports.RELAY_PORT} (TLS authenticated)`,
   );
   await new Promise((resolve) => {
     if (controller.signal.aborted) resolve();
@@ -114,7 +126,7 @@ async function assertPortAvailable(port, key) {
   });
 }
 
-async function waitUntilReady(ports, signal) {
+async function waitUntilReady(ports, agentPath, signal) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     signal.throwIfAborted();
@@ -127,7 +139,7 @@ async function waitUntilReady(ports, signal) {
       const health = await api.json();
       await dashboard.body?.cancel();
       if (api.ok && health.data?.status === 'ok' && dashboard.ok) {
-        await probeRelay(ports.RELAY_PORT);
+        await probeRelay(ports.RELAY_PORT, agentPath, signal);
         return;
       }
     } catch {
@@ -140,18 +152,18 @@ async function waitUntilReady(ports, signal) {
   );
 }
 
-function probeRelay(port) {
-  return new Promise((resolve, reject) => {
-    const socket = createConnection({ host: '127.0.0.1', port });
-    socket.setTimeout(1_000);
-    socket.once('connect', () => {
-      socket.destroy();
-      resolve();
-    });
-    socket.once('timeout', () => {
-      socket.destroy();
-      reject(new Error('Relay probe timed out'));
-    });
-    socket.once('error', reject);
+async function probeRelay(port, agentPath, signal) {
+  await promisify(execFile)(agentPath, ['connect', '--once'], {
+    cwd: root,
+    signal,
+    timeout: 5000,
+    maxBuffer: 64_000,
+    env: {
+      ...process.env,
+      PORTWAY_JSON: '1',
+      PORTWAY_RELAY_ADDR: `127.0.0.1:${port}`,
+      PORTWAY_CONNECT_TIMEOUT: '2s',
+      PORTWAY_HANDSHAKE_TIMEOUT: '2s',
+    },
   });
 }

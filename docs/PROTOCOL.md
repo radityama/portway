@@ -80,9 +80,9 @@ retry a partially written frame.
 Payload encoding is JSON for control messages in protocol v1 and raw bytes for `DATA`. This is deliberate for the starter implementation; a compact binary control codec may be introduced only with a versioned compatibility plan.
 
 The frame codec validates the envelope and treats payload bytes as opaque.
-Message-specific codecs validate control payloads. Phase 1 defines the
-`HELLO`/`HELLO_ACK` codecs below; other control schemas and session state
-transitions are introduced with their implementation phases.
+Message-specific codecs validate control payloads. `HELLO`/`HELLO_ACK` and
+`AUTH`/`AUTH_OK`/`AUTH_ERROR` are defined below; other control schemas are
+introduced with their implementation phases.
 
 ## Version and capabilities
 
@@ -137,6 +137,70 @@ Phase 2 connects this ownership to the agent and relay lifecycle.
 Shared byte-level fixtures live in `tests/fixtures/protocol-v1.json`. Go tests
 verify the codec against them; TypeScript tests verify shared constants and
 64-bit stream IDs against the same fixtures.
+
+## Authenticated connection (Phase 2)
+
+The agent dials outbound TCP, verifies the relay certificate and hostname, and
+negotiates TLS 1.3 with ALPN `portway/1`. Plain TCP and disabled certificate
+verification are rejected. Certificate trust uses the configured CA bundle or
+system roots. Each new TLS connection must authenticate; TLS resumption does not
+skip authentication.
+
+The only valid initial sequence is:
+
+```text
+TLS → HELLO → HELLO_ACK → AUTH → AUTH_OK → authenticated
+                                   └──→ AUTH_ERROR → closed
+```
+
+All five handshake types have a 4096-byte payload cap. Phase 2 session offers
+require a payload limit of at least 4096 bytes so every authentication message
+fits the negotiated limit. Unexpected message types are rejected at the header
+before reading their body. No capability is advertised until its behavior exists.
+
+`AUTH` contains only the bearer credential:
+
+```json
+{ "token": "<opaque credential>" }
+```
+
+Tokens contain 32–512 printable ASCII bytes, with no whitespace. The relay checks
+the SHA-256 hash of a high-entropy token, its `connect` scope, expiration, and
+revocation through a credential-verifier interface. Phase 2 uses a bounded local
+credential file mirroring existing `TunnelCredential` fields. Durable issuance
+and control-plane revocation propagation are Phase 9 work; no DB access is added.
+
+`AUTH_OK` identifies the authenticated connection and its credential deadline:
+
+```json
+{
+  "connection_id": "con_0123456789abcdef0123456789abcdef",
+  "expires_at": "2026-10-01T00:00:00Z"
+}
+```
+
+Connection IDs use `con_` followed by 32 lowercase hexadecimal digits generated
+from 16 cryptographically random bytes. An agent rejects an already-expired ACK.
+`AUTH_ERROR` contains only a stable code:
+
+```json
+{ "code": "AUTH_INVALID" }
+```
+
+Allowed codes are `AUTH_INVALID`, `AUTH_EXPIRED`, and `AUTH_REVOKED`. Unknown
+fields, duplicate keys, nulls, trailing JSON, and incorrect types are rejected.
+Authentication failures and logs never echo a token or raw payload.
+
+The deadline covers the whole TLS/HELLO/AUTH handshake (default 10s). Active
+reads have a 120s idle timeout, writes a 5s timeout, and neither extends credential
+expiration. Cancellation closes sockets immediately. The listener caps accepted
+connections (default 128), including unauthenticated handshakes; excess sockets
+are closed before starting a goroutine. Shutdown closes the listener and active
+connections and joins the owned goroutines.
+
+After authentication, Phase 2 waits for peer closure or cancellation. Other
+frames are rejected until their session behavior is implemented. Authentication
+does not assign a public URL or register a tunnel; registration is Phase 3.
 
 ## Invariants
 

@@ -78,6 +78,21 @@ func Decode(r io.Reader) (Frame, error) {
 // DecodeWithLimit validates the complete header before allocating the payload.
 // Callers own cancellation and deadlines on the underlying reader.
 func DecodeWithLimit(r io.Reader, maxPayloadSize uint32) (Frame, error) {
+	return decode(r, maxPayloadSize, nil, false)
+}
+
+// DecodeTypes rejects unexpected types before reading their bodies. An empty
+// allowlist rejects every frame, which is useful in a session with no next message.
+func DecodeTypes(r io.Reader, maxPayloadSize uint32, allowed ...Type) (Frame, error) {
+	for _, frameType := range allowed {
+		if !frameType.Valid() {
+			return Frame{}, ErrUnknownType
+		}
+	}
+	return decode(r, maxPayloadSize, allowed, true)
+}
+
+func decode(r io.Reader, maxPayloadSize uint32, allowed []Type, restrict bool) (Frame, error) {
 	if err := validateLimit(maxPayloadSize); err != nil {
 		return Frame{}, err
 	}
@@ -97,6 +112,15 @@ func DecodeWithLimit(r io.Reader, maxPayloadSize uint32) (Frame, error) {
 	}
 	if err := f.validateHeader(uint64(length), maxPayloadSize); err != nil {
 		return Frame{}, err
+	}
+	if restrict {
+		found := false
+		for _, frameType := range allowed {
+			found = found || f.Type == frameType
+		}
+		if !found {
+			return Frame{}, ErrUnexpectedType
+		}
 	}
 	if length > 0 {
 		f.Payload = make([]byte, int(length))

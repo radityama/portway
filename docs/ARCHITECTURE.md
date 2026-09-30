@@ -163,6 +163,8 @@ CONNECTING
   ↓
 AUTHENTICATING
   ↓
+AUTHENTICATED
+  ↓
 REGISTERING
   ↓
 CONNECTED
@@ -222,7 +224,11 @@ The protocol defines framing, stream IDs, flow control, lifecycle messages, capa
 Phase 1 provides synchronous, bounded framing and capability negotiation as
 specified in [PROTOCOL.md](./PROTOCOL.md). Transport/session callers own socket
 deadlines, cancellation, serialized writes, and connection closure; the codec
-creates no background goroutines. Live authenticated TLS begins in Phase 2.
+creates no background goroutines. Phase 2 adds verified TLS and scoped credential
+authentication. Its relay bounds accepted connections before starting goroutines;
+socket deadlines cover TLS/HELLO/AUTH, idle reads, writes, and credential expiry.
+Context cancellation closes the listener/connections and joins their workers.
+Authenticated connections have no routing ownership until Phase 3 registration.
 
 ## 9. Multiplexing
 

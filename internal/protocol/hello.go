@@ -220,6 +220,13 @@ func validateHandshakeFrame(f Frame, expected Type) error {
 // decoder otherwise accepts duplicate keys and maps null arrays to nil slices.
 // Never return decoder errors that could include peer-supplied payload contents.
 func decodeHandshake(payload []byte, value any) error {
+	return decodeObject(payload, value,
+		[]string{"version", "capabilities", "required_capabilities", "max_payload_size"},
+		[]string{"version", "capabilities", "max_payload_size"},
+		[]string{"capabilities", "required_capabilities"})
+}
+
+func decodeObject(payload []byte, value any, allowed, required, nonNull []string) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {
@@ -235,9 +242,7 @@ func decodeHandshake(payload []byte, value any) error {
 		if !ok {
 			return ErrInvalidHandshake
 		}
-		switch key {
-		case "version", "capabilities", "required_capabilities", "max_payload_size":
-		default:
+		if !slices.Contains(allowed, key) {
 			return ErrInvalidHandshake
 		}
 		if _, exists := fields[key]; exists {
@@ -252,12 +257,12 @@ func decodeHandshake(payload []byte, value any) error {
 	if _, err := decoder.Token(); err != nil {
 		return ErrInvalidHandshake
 	}
-	for _, required := range []string{"version", "capabilities", "max_payload_size"} {
-		if _, exists := fields[required]; !exists {
+	for _, key := range required {
+		if _, exists := fields[key]; !exists {
 			return ErrInvalidHandshake
 		}
 	}
-	for _, key := range []string{"capabilities", "required_capabilities"} {
+	for _, key := range nonNull {
 		if raw, exists := fields[key]; exists && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			return ErrInvalidHandshake
 		}

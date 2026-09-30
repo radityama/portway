@@ -18,6 +18,7 @@
 - [Starter Status](./STARTER_STATUS.md) — what is scaffolded and what still requires implementation
 - [Phase 0](./PHASE_0.md) — bootstrap deliverables, acceptance checks, and the next implementation boundary
 - [Phase 1](./PHASE_1.md) — protocol framing, negotiation, compatibility, and failure tests
+- [Phase 2](./PHASE_2.md) — authenticated TLS connections, credential verification, and lifecycle tests
 
 ## Contract hierarchy
 

@@ -67,6 +67,15 @@ func FuzzFrameRoundTrip(f *testing.F) {
 }
 
 func FuzzHandshake(f *testing.F) {
+	for _, fixture := range loadFixtures(f).Frames {
+		if fixture.Type >= 1 && fixture.Type <= 5 {
+			payload, err := hex.DecodeString(fixture.PayloadHex)
+			if err != nil {
+				f.Fatal(err)
+			}
+			f.Add(payload)
+		}
+	}
 	f.Add([]byte(`{"version":1,"capabilities":[],"max_payload_size":4194304}`))
 	f.Add([]byte(`{"version":1,"capabilities":["heartbeat"],"required_capabilities":["heartbeat"],"max_payload_size":1024}`))
 	f.Add([]byte(`{"version":1,"capabilities":["future_feature"],"max_payload_size":1}`))
@@ -93,6 +102,39 @@ func FuzzHandshake(f *testing.F) {
 			decoded, err := DecodeHelloAck(encoded)
 			if err != nil || decoded.Version != ack.Version || decoded.MaxPayloadSize != ack.MaxPayloadSize || !slices.Equal(decoded.Capabilities, ack.Capabilities) {
 				t.Fatalf("HELLO_ACK canonical round trip failed: %v", err)
+			}
+		}
+		frame.Type = TypeAuth
+		if value, err := DecodeAuth(frame); err == nil {
+			encoded, err := EncodeAuth(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeAuth(encoded)
+			if err != nil || decoded != value {
+				t.Fatal("AUTH canonical round trip failed")
+			}
+		}
+		frame.Type = TypeAuthOK
+		if value, err := DecodeAuthOK(frame); err == nil {
+			encoded, err := EncodeAuthOK(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeAuthOK(encoded)
+			if err != nil || decoded.ConnectionID != value.ConnectionID || !decoded.ExpiresAt.Equal(value.ExpiresAt) {
+				t.Fatal("AUTH_OK canonical round trip failed")
+			}
+		}
+		frame.Type = TypeAuthError
+		if value, err := DecodeAuthError(frame); err == nil {
+			encoded, err := EncodeAuthError(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeAuthError(encoded)
+			if err != nil || decoded != value {
+				t.Fatal("AUTH_ERROR canonical round trip failed")
 			}
 		}
 	})

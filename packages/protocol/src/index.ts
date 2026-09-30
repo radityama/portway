@@ -4,6 +4,25 @@ export const MAX_PAYLOAD_SIZE = 4 * 1024 * 1024;
 export const MAX_HANDSHAKE_PAYLOAD_SIZE = 4096 as const;
 export const MAX_CAPABILITIES = 32 as const;
 export const MAX_CAPABILITY_NAME_SIZE = 64 as const;
+export const MIN_TOKEN_SIZE = 32 as const;
+export const MAX_TOKEN_SIZE = 512 as const;
+
+export const AUTH_ERROR_CODES = {
+  INVALID: 'AUTH_INVALID',
+  EXPIRED: 'AUTH_EXPIRED',
+  REVOKED: 'AUTH_REVOKED',
+} as const;
+
+export interface Auth {
+  token: string;
+}
+export interface AuthOK {
+  connection_id: string;
+  expires_at: string;
+}
+export interface AuthError {
+  code: (typeof AUTH_ERROR_CODES)[keyof typeof AUTH_ERROR_CODES];
+}
 
 // Names are shared contracts; advertising one requires its implementation.
 export const CAPABILITIES = {

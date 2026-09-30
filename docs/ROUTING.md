@@ -121,6 +121,11 @@ Agent
 
 If a tunnel has a newer generation already registered, the relay must reject or close the stale session.
 
+Phase 2 implements the verified TLS and HELLO/AUTH portion of this sequence with
+bounded timeouts and credential checks. It does not expose public routing or
+register a tunnel. The authenticated connection carries a random connection ID;
+Phase 3 will bind its verified credential identity to a tunnel/generation.
+
 ## 7. Public Request Routing
 
 For:

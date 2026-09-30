@@ -15,9 +15,19 @@ partial writes, and bounded version/capability negotiation. Shared fixtures
 verify Go and TypeScript compatibility. Unit, pipe I/O, race, and active fuzz
 checks cover failure behavior. See [PHASE_1.md](./PHASE_1.md).
 
-The next phase is Phase 2: authenticated agent-to-relay TLS and connection
-lifecycle. Tunnel registration, public forwarding, database migrations, and
-dashboard features remain scheduled in later phases.
+## Phase 2
+
+Authenticated agent-to-relay TLS is implemented. Both sides require TLS 1.3 and
+Portway ALPN, follow HELLO/AUTH ordering, bound network operations, and close on
+cancellation or credential expiry. The relay caps unauthenticated and active
+connections and joins them on shutdown. The file verifier uses token hashes,
+connect scope, expiration, and revocation. The CLI reports the actual
+`relay_authenticated` milestone; development readiness verifies it end to end.
+See [PHASE_2.md](./PHASE_2.md).
+
+The next phase is Phase 3: tunnel registration, hostname assignment, and stale
+session replacement. Public forwarding, durable credential issuance, database
+migrations, and dashboard features remain later work.
 
 ## What this starter contains
 
@@ -25,7 +35,7 @@ dashboard features remain scheduled in later phases.
 - PostgreSQL schema implementation matching the Prisma baseline in `docs/DATABASE.md`
 - OpenAPI contract derived from `docs/API.md`
 - implemented versioned protocol framing and capability-negotiation package
-- relay/agent Go skeletons
+- agent/relay TLS handshake, connection lifecycle, and private development setup
 - control-plane HTTP API scaffold
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification

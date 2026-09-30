@@ -1,4 +1,4 @@
-.PHONY: setup dev doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check integration e2e load-test
+.PHONY: setup dev dev-credentials doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check integration e2e load-test
 
 FUZZTIME ?= 10s
 
@@ -7,6 +7,9 @@ setup:
 
 dev:
 	node scripts/dev.mjs
+
+dev-credentials:
+	go run ./cmd/dev-init --force
 
 doctor:
 	node scripts/doctor.mjs

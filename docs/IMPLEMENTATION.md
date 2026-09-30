@@ -160,6 +160,11 @@ Success criterion:
 Agent connects to local Relay and completes an authenticated handshake.
 ```
 
+Phase 2 implements verified TLS 1.3, strict HELLO/AUTH sequencing, expiring scoped
+credential verification, bounded listener concurrency, and cancellation/shutdown
+ownership. Development setup generates private ignored fixtures; readiness uses
+the real CLI handshake. See [PHASE_2.md](./PHASE_2.md) for acceptance and limits.
+
 ## 7. Phase 3 — Tunnel Registration
 
 Implement:

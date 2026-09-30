@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–1 provide a reproducible development workspace and a validated v1 protocol package with bounded capability negotiation. The API, dashboard, and relay are skeletons. The CLI currently checks whether a local port is reachable; authenticated connections and public forwarding are scheduled for Phases 2–4.
+Phases 0–2 provide a reproducible workspace, a validated v1 protocol, and authenticated agent-to-relay TLS connections. The API and dashboard are skeletons. The relay verifies expiring credentials, bounds connections, and cleans up on cancellation. Tunnel registration and public forwarding are scheduled for Phases 3–4.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -24,23 +24,23 @@ make setup
 make dev
 ```
 
-`make setup` creates `.env` from `.env.example` if it is missing, installs dependencies using the committed lockfile, and generates the Prisma client. Existing `.env` values are preserved. Shell variables take precedence.
+`make setup` creates `.env` if missing, installs dependencies from the lockfile, generates the Prisma client, and creates local TLS/credential files in ignored `.tmp/dev`. Existing environment and credential files are preserved. Shell variables take precedence.
 
-`make dev` waits for healthy PostgreSQL and Redis containers, builds the relay, and starts the API, dashboard, and relay. It announces readiness after checking all three application services.
+`make dev` waits for healthy PostgreSQL and Redis, builds the agent/relay, and starts the API, dashboard, and relay. Readiness requires API/dashboard checks and an actual authenticated TLS handshake with the relay.
 
 Default addresses:
 
-| Service        | Address                        |
-| -------------- | ------------------------------ |
-| Dashboard      | `http://127.0.0.1:3000`        |
-| API health     | `http://127.0.0.1:8080/health` |
-| Relay skeleton | `127.0.0.1:8081` (TCP)         |
-| PostgreSQL     | `127.0.0.1:5432`               |
-| Redis          | `127.0.0.1:6379`               |
+| Service    | Address                        |
+| ---------- | ------------------------------ |
+| Dashboard  | `http://127.0.0.1:3000`        |
+| API health | `http://127.0.0.1:8080/health` |
+| Relay      | `127.0.0.1:8081` (TLS 1.3)     |
+| PostgreSQL | `127.0.0.1:5432`               |
+| Redis      | `127.0.0.1:6379`               |
 
 Press Ctrl+C to stop the application processes and remove the development containers and network. PostgreSQL data stays in the `portway_portway-postgres` named volume. Startup failures also clean up resources created by that run. Starting a second development session on the same application ports fails before it touches the running stack.
 
-Change service ports in `.env`. When changing PostgreSQL or Redis ports, also update `DATABASE_URL` or `REDIS_URL`. API/dashboard development servers and dependency ports bind to loopback. Relay TLS is scheduled for Phase 2.
+Change service ports in `.env`. When changing PostgreSQL or Redis ports, also update `DATABASE_URL` or `REDIS_URL`. Development services bind to loopback, including the relay. The CLI uses `RELAY_PORT` unless `PORTWAY_RELAY_ADDR` is set.
 
 If Docker Hub rate-limits image pulls, the official public mirror can be selected:
 
@@ -50,12 +50,33 @@ REDIS_IMAGE=public.ecr.aws/docker/library/redis:8-alpine \
 make dev
 ```
 
-Once the dashboard is running, the CLI skeleton can be exercised from another terminal:
+With the relay running, verify one authenticated handshake from another terminal:
 
 ```bash
-go run ./cmd/portway 3000
-PORTWAY_JSON=1 go run ./cmd/portway 3000
+go run ./cmd/portway connect --once
+PORTWAY_JSON=1 go run ./cmd/portway connect --once
 ```
+
+`go run ./cmd/portway connect` holds the connection until Ctrl+C, peer closure,
+idle timeout, or credential expiry. `go run ./cmd/portway 3000` also checks the
+local service first. JSON mode reports `relay_authenticated`; public URLs and
+the `ready` event arrive with registration/forwarding in later phases.
+
+`make dev` loads `.env`; standalone Go commands read shell environment. With a
+custom relay port, set the destination explicitly, for example
+`PORTWAY_RELAY_ADDR=127.0.0.1:9443 go run ./cmd/portway connect --once`.
+
+Development credentials expire after 24 hours; the certificate expires after
+seven days. Stop development and run `make dev-credentials` to rotate both, then
+restart. Private files use mode `0600`; their directory uses `0700`. The generator
+does not install a system CA and does not print a credential or private key.
+
+For an operator-managed relay, configure `RELAY_TLS_CERT_FILE`,
+`RELAY_TLS_KEY_FILE`, and `RELAY_CREDENTIALS_FILE`; set `RELAY_BIND_HOST` explicitly
+to expose its listener. The agent uses `PORTWAY_RELAY_ADDR`,
+`PORTWAY_RELAY_CA_FILE`, optional `PORTWAY_RELAY_SERVER_NAME`, and
+`PORTWAY_TOKEN_FILE`. An empty CA-file value uses system roots. See
+[Phase 2](./docs/PHASE_2.md) for credential format and timeout/limit settings.
 
 ## Quality gates
 

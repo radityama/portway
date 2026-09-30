@@ -312,6 +312,25 @@ Suggested:
 
 Keep exit codes stable for automation.
 
+### Current CLI connection milestone (Phase 2)
+
+`portway connect --once` verifies one authenticated relay handshake and exits.
+`portway connect` holds the authenticated connection until interruption, expiry,
+idle timeout, or peer closure. `portway <port>` also checks the configured local
+service first. These commands do not yet assign a public URL.
+
+Human output is concise. `PORTWAY_JSON=1` emits only newline-delimited JSON on
+stdout: `starting`, `tunnel_connecting`, `relay_authenticated`, and (for a held
+connection) `shutdown_complete` or `error`. Each event includes an RFC3339
+`timestamp`. `relay_authenticated` includes `connection_id` and `relay`; it never
+includes credentials. `ready`, `tunnel_registered`, `tunnel_connected`, and
+`public_url` are reserved until their actual milestones succeed.
+
+Existing implemented exit codes are preserved: `0` for success/clean shutdown,
+`1` for connection/authentication/local-service failures, and `2` for invalid
+command usage. The broader suggested codes above remain a future CLI change.
+This milestone changes the CLI interface only; REST/OpenAPI semantics are unchanged.
+
 ## 13. Pagination
 
 Collection APIs should support cursor pagination:

@@ -8,6 +8,7 @@ import (
 var (
 	ErrUnsupportedVersion = errors.New("unsupported protocol version")
 	ErrUnknownType        = errors.New("unknown frame type")
+	ErrUnexpectedType     = errors.New("unexpected frame type for connection state")
 	ErrInvalidFlags       = errors.New("v1 frame flags must be zero")
 	ErrReservedByte       = errors.New("reserved header byte must be zero")
 	ErrInvalidStreamID    = errors.New("invalid stream ID for frame type")
@@ -65,7 +66,7 @@ func (f Frame) validateHeader(length uint64, limit uint32) error {
 	if length > uint64(limit) {
 		return fmt.Errorf("%w: %d > %d", ErrPayloadTooLarge, length, limit)
 	}
-	if (f.Type == TypeHello || f.Type == TypeHelloAck) && length > MaxHandshakePayloadSize {
+	if f.Type >= TypeHello && f.Type <= TypeAuthError && length > MaxHandshakePayloadSize {
 		return ErrPayloadTooLarge
 	}
 	return nil

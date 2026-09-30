@@ -16,17 +16,21 @@ import (
 	"github.com/radityama/portway/internal/agent"
 	"github.com/radityama/portway/internal/auth"
 	"github.com/radityama/portway/internal/config"
+	"github.com/radityama/portway/internal/protocol"
 	"github.com/radityama/portway/internal/transport"
 )
 
 type Event struct {
-	Event        string `json:"event"`
-	Timestamp    string `json:"timestamp"`
-	LocalURL     string `json:"local_url,omitempty"`
-	ConnectionID string `json:"connection_id,omitempty"`
-	Relay        string `json:"relay,omitempty"`
-	Port         int    `json:"port,omitempty"`
-	Error        string `json:"error,omitempty"`
+	Event          string `json:"event"`
+	Timestamp      string `json:"timestamp"`
+	LocalURL       string `json:"local_url,omitempty"`
+	ConnectionID   string `json:"connection_id,omitempty"`
+	Relay          string `json:"relay,omitempty"`
+	Port           int    `json:"port,omitempty"`
+	Error          string `json:"error,omitempty"`
+	TunnelID       string `json:"tunnel_id,omitempty"`
+	Generation     string `json:"generation,omitempty"`
+	PublicHostname string `json:"public_hostname,omitempty"`
 }
 
 func main() {
@@ -53,15 +57,17 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 		return code
 	}
 	once := false
+	register := false
 	port := 0
 	if len(args) == 0 {
-		return fail("usage: portway <port> | portway connect [--once]", 2)
+		return fail("usage: portway <port> | portway connect [--once] | portway register [--once]", 2)
 	}
-	if args[0] == "connect" {
+	if args[0] == "connect" || args[0] == "register" {
+		register = args[0] == "register"
 		if len(args) == 2 && args[1] == "--once" {
 			once = true
 		} else if len(args) != 1 {
-			return fail("usage: portway connect [--once]", 2)
+			return fail("usage: portway connect [--once] | portway register [--once]", 2)
 		}
 	} else {
 		parsed, err := strconv.Atoi(args[0])
@@ -72,6 +78,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 			return fail("usage: portway <port>", 2)
 		}
 		port = parsed
+		register = true
 	}
 	cfg, err := config.AgentEnvironment(env)
 	if err != nil {
@@ -87,6 +94,10 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	}
 	emit(Event{Event: "starting"})
 	if port != 0 && !localReachable(ctx, port) {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			emit(Event{Event: "shutdown_complete"})
+			return 0
+		}
 		return fail(fmt.Sprintf("localhost:%d is not reachable", port), 1)
 	}
 	emit(Event{Event: "tunnel_connecting", Relay: cfg.Address, Port: port})
@@ -94,6 +105,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	client.HandshakeTimeout = cfg.HandshakeTimeout
 	client.IdleTimeout = cfg.IdleTimeout
 	client.WriteTimeout = cfg.WriteTimeout
+	client.RegistrationTimeout = cfg.RegistrationTimeout
 	session, err := client.Connect(ctx, cfg.Address, token)
 	token = ""
 	if err != nil {
@@ -113,13 +125,39 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 		localURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	}
 	emit(Event{Event: "relay_authenticated", ConnectionID: session.ConnectionID, Relay: cfg.Address, LocalURL: localURL, Port: port})
+	if register {
+		generation, err := agent.ReserveGeneration(ctx, cfg.StateDir, cfg.TunnelID, cfg.Generation)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				emit(Event{Event: "shutdown_complete"})
+				return 0
+			}
+			return fail("cannot reserve tunnel generation; check state directory or concurrent starts", 1)
+		}
+		ack, err := session.Register(ctx, protocol.Register{TunnelID: cfg.TunnelID, Generation: generation})
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				emit(Event{Event: "shutdown_complete"})
+				return 0
+			}
+			var rejected *agent.RegistrationError
+			if errors.As(err, &rejected) {
+				return fail("tunnel registration failed: "+rejected.Code, 1)
+			}
+			return fail("tunnel registration failed; check relay availability and configuration", 1)
+		}
+		emit(Event{Event: "tunnel_registered", TunnelID: ack.TunnelID, ConnectionID: ack.ConnectionID, Generation: ack.Generation.String(), PublicHostname: ack.PublicHostname, Relay: cfg.Address, LocalURL: localURL, Port: port})
+		if jsonMode != "1" {
+			fmt.Fprintf(stdout, "✓ Tunnel registered\nHostname %s\n", ack.PublicHostname)
+		}
+	}
 	if jsonMode != "1" {
 		fmt.Fprintf(stdout, "✓ Relay authenticated: %s\n", cfg.Address)
 		if localURL != "" {
 			fmt.Fprintf(stdout, "Local %s\n", localURL)
 		}
 		if !once {
-			fmt.Fprintln(stdout, "Public URLs are not available yet. Press Ctrl+C to disconnect.")
+			fmt.Fprintln(stdout, "Public forwarding is not available yet. Press Ctrl+C to disconnect.")
 		}
 	}
 	if once {

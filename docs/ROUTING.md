@@ -121,10 +121,19 @@ Agent
 
 If a tunnel has a newer generation already registered, the relay must reject or close the stale session.
 
-Phase 2 implements the verified TLS and HELLO/AUTH portion of this sequence with
-bounded timeouts and credential checks. It does not expose public routing or
-register a tunnel. The authenticated connection carries a random connection ID;
-Phase 3 will bind its verified credential identity to a tunnel/generation.
+Phase 2 implements verified TLS and HELLO/AUTH. Phase 3 binds the requested tunnel
+ID to the verified credential, assigns a deterministic hostname, and registers
+only a strictly newer generation. REGISTER/REGISTER_OK/REGISTER_ERROR schemas and
+bounds are in [PROTOCOL.md](./PROTOCOL.md). Authentication alone grants no route.
+
+`relay.Server.Lookup` resolves a canonical lowercase DNS hostname to an immutable
+snapshot of the active, unexpired owner. It rejects ports, URLs and trailing dots;
+future HTTP ingress owns Host/SNI parsing. Phase 3 has no public listener or stream
+forwarding. Public request routing begins in Phase 4.
+
+Hostnames use `p-` plus the first 128 bits of SHA-256(tunnel ID), under operator
+configured PUBLIC_BASE_DOMAIN. They are stable per tunnel/base domain. Peers may
+not choose a hostname; collisions fail closed. Custom domain policy is Phase 12.
 
 ## 7. Public Request Routing
 
@@ -408,6 +417,18 @@ Once 11 is accepted:
 - routing points to 11
 - session 10 is closed
 - session 10 cannot overwrite mapping back to itself
+
+Equal generations also fail. Cleanup checks the exact owner entry; a replaced
+session's late cleanup cannot remove its successor. Disconnected owners retain
+their highest generation and hostname allocation until relay restart. Retained
+entries are capped by RELAY_MAX_TUNNELS; capacity rejects new IDs rather than
+evicting stale-session protection. Higher generations of known IDs remain allowed.
+Failed ACK writes remove active routing but retain the accepted generation.
+
+The CLI reserves generations before sending REGISTER, with private per-tunnel
+files and an exclusive lock. Concurrent starts fail without a retry loop. Failed
+attempts may leave gaps. Multi-relay coordination and automatic reconnect remain
+later phases; local counter loss needs an operator-selected higher generation.
 
 ## 23. Relay Failure
 

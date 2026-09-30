@@ -68,7 +68,7 @@ func FuzzFrameRoundTrip(f *testing.F) {
 
 func FuzzHandshake(f *testing.F) {
 	for _, fixture := range loadFixtures(f).Frames {
-		if fixture.Type >= 1 && fixture.Type <= 5 {
+		if fixture.Type >= 1 && fixture.Type <= 8 {
 			payload, err := hex.DecodeString(fixture.PayloadHex)
 			if err != nil {
 				f.Fatal(err)
@@ -137,5 +137,39 @@ func FuzzHandshake(f *testing.F) {
 				t.Fatal("AUTH_ERROR canonical round trip failed")
 			}
 		}
+		frame.Type = TypeRegister
+		if value, err := DecodeRegister(frame); err == nil {
+			encoded, err := EncodeRegister(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeRegister(encoded)
+			if err != nil || decoded != value {
+				t.Fatal("REGISTER canonical round trip failed")
+			}
+		}
+		frame.Type = TypeRegisterOK
+		if value, err := DecodeRegisterOK(frame); err == nil {
+			encoded, err := EncodeRegisterOK(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeRegisterOK(encoded)
+			if err != nil || decoded != value {
+				t.Fatal("REGISTER_OK canonical round trip failed")
+			}
+		}
+		frame.Type = TypeRegisterError
+		if value, err := DecodeRegisterError(frame); err == nil {
+			encoded, err := EncodeRegisterError(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeRegisterError(encoded)
+			if err != nil || decoded != value {
+				t.Fatal("REGISTER_ERROR canonical round trip failed")
+			}
+		}
+
 	})
 }

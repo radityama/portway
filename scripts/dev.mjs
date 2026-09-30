@@ -89,7 +89,7 @@ try {
 
   await waitUntilReady(ports, agentPath, controller.signal);
   console.log(
-    `Portway development ready\nAPI       http://127.0.0.1:${ports.API_PORT}/health\nDashboard http://127.0.0.1:${ports.DASHBOARD_PORT}\nRelay     127.0.0.1:${ports.RELAY_PORT} (TLS authenticated)`,
+    `Portway development ready\nAPI       http://127.0.0.1:${ports.API_PORT}/health\nDashboard http://127.0.0.1:${ports.DASHBOARD_PORT}\nRelay     127.0.0.1:${ports.RELAY_PORT} (TLS authenticated, registration verified)`,
   );
   await new Promise((resolve) => {
     if (controller.signal.aborted) resolve();
@@ -153,7 +153,7 @@ async function waitUntilReady(ports, agentPath, signal) {
 }
 
 async function probeRelay(port, agentPath, signal) {
-  await promisify(execFile)(agentPath, ['connect', '--once'], {
+  await promisify(execFile)(agentPath, ['register', '--once'], {
     cwd: root,
     signal,
     timeout: 5000,
@@ -164,6 +164,7 @@ async function probeRelay(port, agentPath, signal) {
       PORTWAY_RELAY_ADDR: `127.0.0.1:${port}`,
       PORTWAY_CONNECT_TIMEOUT: '2s',
       PORTWAY_HANDSHAKE_TIMEOUT: '2s',
+      PORTWAY_REGISTRATION_TIMEOUT: '2s',
     },
   });
 }

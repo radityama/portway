@@ -6,6 +6,28 @@ export const MAX_CAPABILITIES = 32 as const;
 export const MAX_CAPABILITY_NAME_SIZE = 64 as const;
 export const MIN_TOKEN_SIZE = 32 as const;
 export const MAX_TOKEN_SIZE = 512 as const;
+export const MAX_TUNNEL_ID_SIZE = 128 as const;
+
+export const REGISTER_ERROR_CODES = {
+  INVALID: 'REGISTER_INVALID',
+  FORBIDDEN: 'REGISTER_FORBIDDEN',
+  STALE: 'REGISTER_STALE',
+  CAPACITY: 'REGISTER_CAPACITY',
+  CONFLICT: 'REGISTER_CONFLICT',
+} as const;
+
+// uint64 generation uses a decimal string, never a JavaScript number.
+export interface Register {
+  tunnel_id: string;
+  generation: string;
+}
+export interface RegisterOK extends Register {
+  connection_id: string;
+  public_hostname: string;
+}
+export interface RegisterError {
+  code: (typeof REGISTER_ERROR_CODES)[keyof typeof REGISTER_ERROR_CODES];
+}
 
 export const AUTH_ERROR_CODES = {
   INVALID: 'AUTH_INVALID',

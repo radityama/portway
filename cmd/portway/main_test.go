@@ -52,13 +52,82 @@ func cliFixture(t *testing.T) (config.Lookup, string) {
 			t.Error("CLI fixture did not stop")
 		}
 	})
-	env := map[string]string{"PORTWAY_JSON": "1", "PORTWAY_RELAY_ADDR": listener.Addr().String(), "PORTWAY_RELAY_CA_FILE": filepath.Join(dir, "ca.pem"), "PORTWAY_TOKEN_FILE": filepath.Join(dir, "agent-token")}
+	env := map[string]string{"PORTWAY_JSON": "1", "PORTWAY_STATE_DIR": filepath.Join(dir, "agent-state"), "PORTWAY_RELAY_ADDR": listener.Addr().String(), "PORTWAY_RELAY_CA_FILE": filepath.Join(dir, "ca.pem"), "PORTWAY_TOKEN_FILE": filepath.Join(dir, "agent-token")}
 	lookup := func(key string) (string, bool) { v, ok := env[key]; return v, ok }
 	token, err := auth.ReadTokenFile(filepath.Join(dir, "agent-token"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return lookup, token
+}
+
+func TestRegisteredCLIJSONAndPersistedGeneration(t *testing.T) {
+	env, token := cliFixture(t)
+	for _, generation := range []string{"1", "2", "3"} {
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"register", "--once"}, env, &stdout, &stderr); code != 0 {
+			t.Fatalf("registration failed: %s", stdout.String())
+		}
+		if strings.Contains(stdout.String(), token) || strings.Contains(stdout.String(), "\x1b") || stderr.Len() != 0 {
+			t.Fatal("unsafe JSON output")
+		}
+		lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+		if len(lines) != 4 {
+			t.Fatal("unexpected registration events")
+		}
+		var event Event
+		if err := json.Unmarshal([]byte(lines[3]), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Event != "tunnel_registered" || event.TunnelID != "tnl_local_dev" || event.Generation != generation || event.PublicHostname == "" || event.ConnectionID == "" {
+			t.Fatal("registration metadata missing")
+		}
+		if strings.Contains(stdout.String(), `"event":"ready"`) || strings.Contains(stdout.String(), `"public_url"`) {
+			t.Fatal("CLI claimed public forwarding")
+		}
+	}
+	wrongScope := func(key string) (string, bool) {
+		if key == "PORTWAY_TUNNEL_ID" {
+			return "tnl_other", true
+		}
+		return env(key)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"register", "--once"}, wrongScope, &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "REGISTER_FORBIDDEN") || strings.Contains(stdout.String(), "tunnel_registered") {
+		t.Fatal("CLI hid failed scoped registration")
+	}
+}
+
+type cancelWriter struct {
+	bytes.Buffer
+	cancel context.CancelFunc
+}
+
+func (w *cancelWriter) Write(data []byte) (int, error) {
+	n, err := w.Buffer.Write(data)
+	if bytes.Contains(data, []byte(`"event":"tunnel_registered"`)) {
+		w.cancel()
+	}
+	return n, err
+}
+func TestLocalPortCLIRegistersAndCancelsCleanly(t *testing.T) {
+	env, _ := cliFixture(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stdout := &cancelWriter{cancel: cancel}
+	var stderr bytes.Buffer
+	if code := run(ctx, []string{port}, env, stdout, &stderr); code != 0 {
+		t.Fatalf("port CLI failed: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"event":"tunnel_registered"`) || !strings.Contains(stdout.String(), `"event":"shutdown_complete"`) || !strings.Contains(stdout.String(), `"local_url":"http://127.0.0.1:`) {
+		t.Fatal("local-port lifecycle incomplete")
+	}
 }
 func TestAuthenticatedCLIJSONContract(t *testing.T) {
 	env, token := cliFixture(t)

@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -23,27 +22,22 @@ var ErrConfig = errors.New("invalid relay TLS/authentication configuration")
 var ErrCapacity = errors.New("relay connection limit reached")
 
 type Server struct {
-	Logger           *slog.Logger
-	TLSConfig        *tls.Config
-	Authenticator    auth.Verifier
-	MaxConnections   int
-	HandshakeTimeout time.Duration
-	ReadIdleTimeout  time.Duration
-	WriteTimeout     time.Duration
-	MaxStreams       uint32
-	MaxFrame         uint32
-	mu               sync.RWMutex
-	sessions         map[string]*Session
-	active           map[net.Conn]struct{}
-}
-
-// Session is the registration scaffold; Phase 2 does not add routing ownership.
-type Session struct {
-	TunnelID     string
-	ConnectionID string
-	Generation   uint64
-	Conn         net.Conn
-	LastSeen     time.Time
+	Logger              *slog.Logger
+	TLSConfig           *tls.Config
+	Authenticator       auth.Verifier
+	MaxConnections      int
+	HandshakeTimeout    time.Duration
+	RegistrationTimeout time.Duration
+	PublicBaseDomain    string
+	MaxTunnels          int
+	ReadIdleTimeout     time.Duration
+	WriteTimeout        time.Duration
+	MaxStreams          uint32
+	MaxFrame            uint32
+	mu                  sync.RWMutex
+	sessions            map[string]*registryEntry
+	hostnames           map[string]string
+	active              map[net.Conn]struct{}
 }
 
 func NewServer(logger *slog.Logger) *Server {
@@ -51,12 +45,16 @@ func NewServer(logger *slog.Logger) *Server {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return &Server{Logger: logger, MaxConnections: 128, HandshakeTimeout: 10 * time.Second,
+		RegistrationTimeout: 10 * time.Second, PublicBaseDomain: "portway.localhost", MaxTunnels: 1024,
 		ReadIdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxStreams: 1024,
-		MaxFrame: protocol.MaxPayloadSize, sessions: make(map[string]*Session), active: make(map[net.Conn]struct{})}
+		MaxFrame: protocol.MaxPayloadSize, sessions: make(map[string]*registryEntry), hostnames: make(map[string]string), active: make(map[net.Conn]struct{})}
 }
 
 func (s *Server) validate() error {
 	if s.TLSConfig == nil || len(s.TLSConfig.Certificates) == 0 || s.TLSConfig.MinVersion < tls.VersionTLS13 || (s.TLSConfig.MaxVersion != 0 && s.TLSConfig.MaxVersion < tls.VersionTLS13) || s.Authenticator == nil || s.MaxConnections < 1 || s.MaxConnections > 10000 || s.MaxFrame < protocol.MaxHandshakePayloadSize || s.MaxFrame > protocol.MaxPayloadSize || s.HandshakeTimeout <= 0 || s.ReadIdleTimeout <= 0 || s.WriteTimeout <= 0 {
+		return ErrConfig
+	}
+	if s.RegistrationTimeout <= 0 || s.MaxTunnels < 1 || s.MaxTunnels > 100000 || !protocol.ValidHostname(s.PublicBaseDomain) || len(s.PublicBaseDomain) > 218 {
 		return ErrConfig
 	}
 	return nil
@@ -194,6 +192,10 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 		// A custom verifier may return sensitive error details. Keep only stable codes.
 		return errors.New(code)
 	}
+	if !protocol.ValidTunnelID(identity.TunnelID) {
+		_ = s.rejectAuth(conn, protocol.AuthInvalid, ack.MaxPayloadSize, deadline)
+		return auth.ErrInvalid
+	}
 	if !time.Now().Before(identity.ExpiresAt) {
 		_ = s.rejectAuth(conn, protocol.AuthExpired, ack.MaxPayloadSize, deadline)
 		return auth.ErrExpired
@@ -215,8 +217,36 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	}
 	s.Logger.Info("relay_authenticated", "connection_id", connectionID, "expires_at", identity.ExpiresAt)
 	defer s.Logger.Info("relay_disconnected", "connection_id", connectionID)
-	// No active-session messages are implemented in Phase 2. An empty allowlist
-	// waits for a header and rejects it before allocating or reading its body.
+	registrationDeadline := earlier(time.Now().Add(s.RegistrationTimeout), identity.ExpiresAt)
+	if ctxDeadline, ok := ctx.Deadline(); ok {
+		registrationDeadline = earlier(registrationDeadline, ctxDeadline)
+	}
+	if err := conn.SetReadDeadline(registrationDeadline); err != nil {
+		return err
+	}
+	frame, err = protocol.DecodeTypes(reader, ack.MaxPayloadSize, protocol.TypeRegister)
+	if err != nil {
+		return err
+	}
+	request, err := protocol.DecodeRegister(frame)
+	if err != nil {
+		_ = s.rejectRegistration(conn, protocol.RegisterInvalid, ack.MaxPayloadSize, registrationDeadline)
+		return protocol.ErrInvalidHandshake
+	}
+	owner, code := s.register(ctx, identity, connectionID, request, raw)
+	if code != "" {
+		_ = s.rejectRegistration(conn, code, ack.MaxPayloadSize, registrationDeadline)
+		return errors.New(code)
+	}
+	defer s.unregister(owner)
+	frame, err = protocol.EncodeRegisterOK(protocol.RegisterOK{TunnelID: owner.TunnelID, ConnectionID: owner.ConnectionID, Generation: owner.Generation, PublicHostname: owner.PublicHostname})
+	if err != nil {
+		return err
+	}
+	if err := s.write(conn, frame, ack.MaxPayloadSize, registrationDeadline); err != nil {
+		return err
+	}
+	s.Logger.Info("relay_registered", "tunnel_id", owner.TunnelID, "connection_id", owner.ConnectionID, "generation", owner.Generation.String(), "hostname", owner.PublicHostname)
 	readDeadline := earlier(time.Now().Add(s.ReadIdleTimeout), identity.ExpiresAt)
 	if ctxDeadline, ok := ctx.Deadline(); ok {
 		readDeadline = earlier(readDeadline, ctxDeadline)
@@ -224,6 +254,8 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	if err := conn.SetReadDeadline(readDeadline); err != nil {
 		return err
 	}
+	// Later phases implement active-session traffic. Reject unexpected headers
+	// before allocating/reading a body, including a second REGISTER.
 	_, err = protocol.DecodeTypes(reader, ack.MaxPayloadSize)
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -268,18 +300,11 @@ func closeReason(err error) string {
 	return "connection_rejected"
 }
 
-func (s *Server) Register(ctx context.Context, session *Session) error {
-	if session.TunnelID == "" || session.ConnectionID == "" {
-		return errors.New("missing tunnel or connection id")
-	}
-	if err := ctx.Err(); err != nil {
+func (s *Server) rejectRegistration(conn net.Conn, code string, limit uint32, deadline time.Time) error {
+	s.Logger.Warn("relay_registration_rejected", "code", code)
+	frame, err := protocol.EncodeRegisterError(protocol.RegisterError{Code: code})
+	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if previous, ok := s.sessions[session.TunnelID]; ok && previous.Generation > session.Generation {
-		return fmt.Errorf("stale generation %d; current generation is %d", session.Generation, previous.Generation)
-	}
-	s.sessions[session.TunnelID] = session
-	return nil
+	return s.write(conn, frame, limit, deadline)
 }

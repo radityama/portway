@@ -59,15 +59,22 @@ func DecodeAuth(frame Frame) (Auth, error) {
 	return value, nil
 }
 
-func (value AuthOK) Validate() error {
-	if len(value.ConnectionID) != 36 || value.ConnectionID[:4] != "con_" || value.ExpiresAt.IsZero() {
-		return ErrInvalidHandshake
+func validConnectionID(id string) bool {
+	if len(id) != 36 || id[:4] != "con_" {
+		return false
 	}
-	for i := 4; i < len(value.ConnectionID); i++ {
-		c := value.ConnectionID[i]
+	for i := 4; i < len(id); i++ {
+		c := id[i]
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return ErrInvalidHandshake
+			return false
 		}
+	}
+	return true
+}
+
+func (value AuthOK) Validate() error {
+	if !validConnectionID(value.ConnectionID) || value.ExpiresAt.IsZero() {
+		return ErrInvalidHandshake
 	}
 	return nil
 }

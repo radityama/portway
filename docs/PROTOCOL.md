@@ -4,6 +4,7 @@
 
 Protocol v1 framing and capability negotiation are implemented in Phase 1.
 Session handshakes and transport ownership are implemented in Phase 2.
+Tunnel registration and generation ownership are implemented in Phase 3.
 
 ## Transport
 
@@ -81,7 +82,7 @@ Payload encoding is JSON for control messages in protocol v1 and raw bytes for `
 
 The frame codec validates the envelope and treats payload bytes as opaque.
 Message-specific codecs validate control payloads. `HELLO`/`HELLO_ACK` and
-`AUTH`/`AUTH_OK`/`AUTH_ERROR` are defined below; other control schemas are
+`AUTH`/`AUTH_OK`/`AUTH_ERROR` and registration are defined below; other control schemas are
 introduced with their implementation phases.
 
 ## Version and capabilities
@@ -198,9 +199,69 @@ connections (default 128), including unauthenticated handshakes; excess sockets
 are closed before starting a goroutine. Shutdown closes the listener and active
 connections and joins the owned goroutines.
 
-After authentication, Phase 2 waits for peer closure or cancellation. Other
-frames are rejected until their session behavior is implemented. Authentication
-does not assign a public URL or register a tunnel; registration is Phase 3.
+Authentication alone does not grant routing ownership. A diagnostic client may
+close after AUTH_OK. Other clients must register within the registration timeout
+(default 10s), bounded by credential expiry and cancellation.
+
+## Tunnel registration (Phase 3)
+
+```text
+authenticated → REGISTER → REGISTER_OK → registered
+                        └→ REGISTER_ERROR → closed
+```
+
+All three registration frames use stream ID 0 and have a 4096-byte payload cap.
+Each connection may register exactly once. REGISTER before authentication, any
+other frame while awaiting registration, and any frame after registration are
+rejected at the header until later phases implement active-session messages.
+
+```json
+{ "tunnel_id": "tnl_local_dev", "generation": "1" }
+```
+
+Tunnel IDs are 1–128 ASCII letters, digits, underscores or hyphens, case sensitive.
+The requested ID must exactly match the authenticated credential's tunnel ID.
+Generation is a canonical decimal **string** representing uint64, from 1 through
+18446744073709551615; leading zeroes, signs, numeric JSON values, and fractions
+are invalid. Strings preserve all 64 bits in JavaScript.
+
+REGISTER_OK echoes the binding and assigns a hostname:
+
+```json
+{
+  "tunnel_id": "tnl_local_dev",
+  "connection_id": "con_0123456789abcdef0123456789abcdef",
+  "generation": "1",
+  "public_hostname": "p-<first 32 lowercase hex digits of SHA-256(tunnel_id)>.portway.localhost"
+}
+```
+
+The agent checks tunnel, connection, and generation against its request. Hostnames
+are canonical lowercase DNS names, with no port, path, trailing dot or IP address.
+The relay controls the base domain, never the peer; host assignment is stable
+across relay-local generations. Hash collisions fail closed. Phase 3 assigns a
+hostname without a public HTTP/HTTPS listener or forwarding; assignment does not
+mean the public URL is ready.
+
+REGISTER_ERROR contains only `code`, one of REGISTER_INVALID, REGISTER_FORBIDDEN,
+REGISTER_STALE, REGISTER_CAPACITY, or REGISTER_CONFLICT. Invalid JSON, unknown
+fields, case aliases, duplicate keys, nulls and trailing data are rejected. Errors
+never echo raw payloads, credentials, or another tunnel's metadata.
+
+Registration atomically replaces only a strictly smaller generation. Equal or
+lower generations are rejected even after the prior session disconnects. The
+previous socket is closed; its later cleanup cannot remove the new route. An
+ACK write failure removes the new route but retains its generation watermark.
+Host lookups return immutable metadata for active, unexpired owners only.
+
+Watermarks are bounded by RELAY_MAX_TUNNELS (default 1024); they are retained until
+relay process restart rather than evicted and made vulnerable to stale reuse.
+Capacity rejects new IDs while allowing higher generations of known IDs.
+Registration state is relay local; persistence, cross-relay coordination and
+control-plane assigned domains remain later phases. The CLI reserves increasing
+generations in a private local state directory before registration. Failed attempts
+consume numbers; gaps are valid. Losing local state requires operator recovery to
+a generation above the relay watermark; counters never silently reset on corruption.
 
 ## Invariants
 

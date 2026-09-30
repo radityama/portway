@@ -182,6 +182,12 @@ Success criterion:
 Agent registers a tunnel and relay can resolve hostname → active session.
 ```
 
+Phase 3 implements strict REGISTER messages, credential-bound tunnel identity,
+relay-assigned stable hostnames, monotonic uint64 generations, atomic stale-owner
+replacement, and bounded retained watermarks. CLI generation reservations persist
+locally, and development readiness exercises registration. See
+[PHASE_3.md](./PHASE_3.md) for acceptance, configuration, and relay-restart limits.
+
 ## 8. Phase 4 — HTTP Data Plane
 
 Implement:

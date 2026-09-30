@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–2 provide a reproducible workspace, a validated v1 protocol, and authenticated agent-to-relay TLS connections. The API and dashboard are skeletons. The relay verifies expiring credentials, bounds connections, and cleans up on cancellation. Tunnel registration and public forwarding are scheduled for Phases 3–4.
+Phases 0–3 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, and tunnel registration. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. The API and dashboard are skeletons. Public HTTP forwarding is Phase 4.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ make dev
 
 `make setup` creates `.env` if missing, installs dependencies from the lockfile, generates the Prisma client, and creates local TLS/credential files in ignored `.tmp/dev`. Existing environment and credential files are preserved. Shell variables take precedence.
 
-`make dev` waits for healthy PostgreSQL and Redis, builds the agent/relay, and starts the API, dashboard, and relay. Readiness requires API/dashboard checks and an actual authenticated TLS handshake with the relay.
+`make dev` waits for healthy PostgreSQL and Redis, builds the agent/relay, and starts the API, dashboard, and relay. Readiness requires API/dashboard checks and an actual authenticated TLS handshake and tunnel registration with the relay.
 
 Default addresses:
 
@@ -57,10 +57,32 @@ go run ./cmd/portway connect --once
 PORTWAY_JSON=1 go run ./cmd/portway connect --once
 ```
 
-`go run ./cmd/portway connect` holds the connection until Ctrl+C, peer closure,
-idle timeout, or credential expiry. `go run ./cmd/portway 3000` also checks the
-local service first. JSON mode reports `relay_authenticated`; public URLs and
-the `ready` event arrive with registration/forwarding in later phases.
+Register a tunnel and hold its relay connection:
+
+```bash
+go run ./cmd/portway register
+# Or check registration and immediately disconnect:
+PORTWAY_JSON=1 go run ./cmd/portway register --once
+# With a local service already listening:
+go run ./cmd/portway 3000
+```
+
+JSON mode reports `relay_authenticated` followed by `tunnel_registered`, including
+the assigned hostname and a decimal-string generation. Registration assigns a
+hostname; it does not serve public requests yet. `ready` and public URLs arrive
+with Phase 4 forwarding. `register --once` closes its route immediately after
+the ACK. Held connections end on Ctrl+C, replacement, idle timeout or expiry.
+`connect` without registration is diagnostic and ends on the registration timeout.
+
+The development credential is scoped to `tnl_local_dev`. Operator credentials
+must match `PORTWAY_TUNNEL_ID`. The relay assigns stable hostnames under
+`PUBLIC_BASE_DOMAIN` (default `portway.localhost`); peers cannot choose hosts.
+Generation counters persist per tunnel in private `PORTWAY_STATE_DIR` (default
+`.tmp/agent-state`). Failed attempts consume numbers. Keep this directory across
+starts; two machines sharing a tunnel need coordinated generations until later
+control-plane/reconnect work. An explicit `PORTWAY_GENERATION` recovery override
+must exceed the relay watermark and the local counter, and is persisted locally.
+Remove the override after recovery so normal increments resume.
 
 `make dev` loads `.env`; standalone Go commands read shell environment. With a
 custom relay port, set the destination explicitly, for example
@@ -76,7 +98,8 @@ For an operator-managed relay, configure `RELAY_TLS_CERT_FILE`,
 to expose its listener. The agent uses `PORTWAY_RELAY_ADDR`,
 `PORTWAY_RELAY_CA_FILE`, optional `PORTWAY_RELAY_SERVER_NAME`, and
 `PORTWAY_TOKEN_FILE`. An empty CA-file value uses system roots. See
-[Phase 2](./docs/PHASE_2.md) for credential format and timeout/limit settings.
+[Phase 2](./docs/PHASE_2.md) for credential format and [Phase 3](./docs/PHASE_3.md)
+for registration settings and relay-restart limits.
 
 ## Quality gates
 

@@ -15,26 +15,33 @@ var ErrEnvironment = errors.New("invalid Portway connection environment")
 type Lookup func(string) (string, bool)
 
 type Relay struct {
-	Address          string
-	CertFile         string
-	KeyFile          string
-	CredentialsFile  string
-	MaxConnections   int
-	MaxFrame         uint32
-	HandshakeTimeout time.Duration
-	IdleTimeout      time.Duration
-	WriteTimeout     time.Duration
+	PublicBaseDomain    string
+	MaxTunnels          int
+	RegistrationTimeout time.Duration
+	Address             string
+	CertFile            string
+	KeyFile             string
+	CredentialsFile     string
+	MaxConnections      int
+	MaxFrame            uint32
+	HandshakeTimeout    time.Duration
+	IdleTimeout         time.Duration
+	WriteTimeout        time.Duration
 }
 
 type Agent struct {
-	Address          string
-	CAFile           string
-	ServerName       string
-	TokenFile        string
-	ConnectTimeout   time.Duration
-	HandshakeTimeout time.Duration
-	IdleTimeout      time.Duration
-	WriteTimeout     time.Duration
+	TunnelID            string
+	StateDir            string
+	Generation          protocol.Generation
+	RegistrationTimeout time.Duration
+	Address             string
+	CAFile              string
+	ServerName          string
+	TokenFile           string
+	ConnectTimeout      time.Duration
+	HandshakeTimeout    time.Duration
+	IdleTimeout         time.Duration
+	WriteTimeout        time.Duration
 }
 
 func value(env Lookup, key, fallback string) string {
@@ -74,6 +81,17 @@ func RelayEnvironment(env Lookup) (Relay, error) {
 		return Relay{}, ErrEnvironment
 	}
 	cfg.MaxConnections = maxConnections
+	cfg.PublicBaseDomain = value(env, "PUBLIC_BASE_DOMAIN", "portway.localhost")
+	if !protocol.ValidHostname(cfg.PublicBaseDomain) || len(cfg.PublicBaseDomain) > 218 {
+		return Relay{}, ErrEnvironment
+	}
+	cfg.MaxTunnels, err = strconv.Atoi(value(env, "RELAY_MAX_TUNNELS", "1024"))
+	if err != nil || cfg.MaxTunnels < 1 || cfg.MaxTunnels > 100000 {
+		return Relay{}, ErrEnvironment
+	}
+	if cfg.RegistrationTimeout, err = duration(env, "RELAY_REGISTRATION_TIMEOUT", "10s"); err != nil {
+		return Relay{}, err
+	}
 	frame, err := strconv.ParseUint(value(env, "RELAY_MAX_FRAME_BYTES", "4194304"), 10, 32)
 	if err != nil || frame < protocol.MaxHandshakePayloadSize || frame > uint64(protocol.MaxPayloadSize) {
 		return Relay{}, ErrEnvironment
@@ -100,6 +118,20 @@ func AgentEnvironment(env Lookup) (Agent, error) {
 		return Agent{}, err
 	}
 	cfg := Agent{Address: value(env, "PORTWAY_RELAY_ADDR", net.JoinHostPort("127.0.0.1", p)), CAFile: value(env, "PORTWAY_RELAY_CA_FILE", ".tmp/dev/ca.pem"), TokenFile: value(env, "PORTWAY_TOKEN_FILE", ".tmp/dev/agent-token")}
+	cfg.TunnelID = value(env, "PORTWAY_TUNNEL_ID", "tnl_local_dev")
+	cfg.StateDir = value(env, "PORTWAY_STATE_DIR", ".tmp/agent-state")
+	if !protocol.ValidTunnelID(cfg.TunnelID) || cfg.StateDir == "" {
+		return Agent{}, ErrEnvironment
+	}
+	if raw, ok := env("PORTWAY_GENERATION"); ok {
+		cfg.Generation, err = protocol.ParseGeneration(raw)
+		if err != nil {
+			return Agent{}, ErrEnvironment
+		}
+	}
+	if cfg.RegistrationTimeout, err = duration(env, "PORTWAY_REGISTRATION_TIMEOUT", "10s"); err != nil {
+		return Agent{}, err
+	}
 	host, port, err := net.SplitHostPort(cfg.Address)
 	parsed, parseErr := strconv.Atoi(port)
 	if err != nil || parseErr != nil || !validHost(host) || parsed < 1 || parsed > 65535 || cfg.TokenFile == "" {

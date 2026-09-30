@@ -60,7 +60,7 @@ func NewVerifier(records []Record) (*FileVerifier, error) {
 	seen := make(map[[sha256.Size]byte]bool)
 	for _, record := range records {
 		digest, err := hex.DecodeString(record.TokenHash)
-		if err != nil || len(digest) != sha256.Size || record.ExpiresAt.IsZero() || record.Scope != "connect" || !validTunnelID(record.TunnelID) {
+		if err != nil || len(digest) != sha256.Size || record.ExpiresAt.IsZero() || record.Scope != "connect" || !protocol.ValidTunnelID(record.TunnelID) {
 			return nil, ErrConfig
 		}
 		var hash [sha256.Size]byte
@@ -152,17 +152,4 @@ func openPrivateFile(path string, maxSize int64) (*os.File, error) {
 		return nil, ErrConfig
 	}
 	return file, nil
-}
-
-func validTunnelID(id string) bool {
-	if len(id) == 0 || len(id) > 128 {
-		return false
-	}
-	for i := range len(id) {
-		c := id[i]
-		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' && c != '-' {
-			return false
-		}
-	}
-	return true
 }

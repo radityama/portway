@@ -25,8 +25,14 @@ connect scope, expiration, and revocation. The CLI reports the actual
 `relay_authenticated` milestone; development readiness verifies it end to end.
 See [PHASE_2.md](./PHASE_2.md).
 
-The next phase is Phase 3: tunnel registration, hostname assignment, and stale
-session replacement. Public forwarding, durable credential issuance, database
+## Phase 3
+
+Credential-bound registration, relay-assigned hostnames, hostname lookup, strict
+generation replacement, bounded retained watermarks, and owner-aware cleanup are
+implemented. The CLI persists generation reservations and emits `tunnel_registered`;
+development readiness verifies registration. See [PHASE_3.md](./PHASE_3.md).
+
+The next phase is Phase 4: public HTTP forwarding. Durable credential issuance, database
 migrations, and dashboard features remain later work.
 
 ## What this starter contains
@@ -36,6 +42,7 @@ migrations, and dashboard features remain later work.
 - OpenAPI contract derived from `docs/API.md`
 - implemented versioned protocol framing and capability-negotiation package
 - agent/relay TLS handshake, connection lifecycle, and private development setup
+- tunnel registration, hostname resolution, generation ownership, and local counters
 - control-plane HTTP API scaffold
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification

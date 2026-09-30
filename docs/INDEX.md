@@ -19,6 +19,7 @@
 - [Phase 0](./PHASE_0.md) — bootstrap deliverables, acceptance checks, and the next implementation boundary
 - [Phase 1](./PHASE_1.md) — protocol framing, negotiation, compatibility, and failure tests
 - [Phase 2](./PHASE_2.md) — authenticated TLS connections, credential verification, and lifecycle tests
+- [Phase 3](./PHASE_3.md) — tunnel registration, hostname resolution, generation ownership, and replacement tests
 
 ## Contract hierarchy
 

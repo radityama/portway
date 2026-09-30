@@ -228,7 +228,11 @@ creates no background goroutines. Phase 2 adds verified TLS and scoped credentia
 authentication. Its relay bounds accepted connections before starting goroutines;
 socket deadlines cover TLS/HELLO/AUTH, idle reads, writes, and credential expiry.
 Context cancellation closes the listener/connections and joins their workers.
-Authenticated connections have no routing ownership until Phase 3 registration.
+Phase 3 grants routing ownership only after credential-bound registration.
+Relay-local generation watermarks are bounded and retained across disconnects;
+replacement closes the old socket, and old cleanup cannot remove the new route.
+Lookup returns immutable active-owner metadata with no API/database call. Agent
+generation reservations persist locally; relay restart loses ephemeral ownership.
 
 ## 9. Multiplexing
 

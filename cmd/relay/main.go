@@ -39,6 +39,9 @@ func main() {
 	server.HandshakeTimeout = cfg.HandshakeTimeout
 	server.ReadIdleTimeout = cfg.IdleTimeout
 	server.WriteTimeout = cfg.WriteTimeout
+	server.RegistrationTimeout = cfg.RegistrationTimeout
+	server.PublicBaseDomain = cfg.PublicBaseDomain
+	server.MaxTunnels = cfg.MaxTunnels
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	listener, err := net.Listen("tcp", cfg.Address)

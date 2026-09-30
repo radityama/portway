@@ -9,6 +9,8 @@ import {
   MAX_CAPABILITY_NAME_SIZE,
   MAX_HANDSHAKE_PAYLOAD_SIZE,
   MAX_PAYLOAD_SIZE,
+  MAX_TUNNEL_ID_SIZE,
+  REGISTER_ERROR_CODES,
   PROTOCOL_VERSION,
 } from '../src/index.ts';
 
@@ -36,6 +38,32 @@ test('TypeScript shares the Go wire constants and bounded handshake contract', (
       ]),
     ),
   );
+});
+
+test('registration preserves all 64 generation bits and shares error codes', () => {
+  const payload = (name: string) =>
+    JSON.parse(
+      Buffer.from(
+        fixtures.frames.find((frame: { name: string }) => frame.name === name)
+          .payload_hex,
+        'hex',
+      ).toString('utf8'),
+    );
+  const request = payload('REGISTER');
+  const ack = payload('REGISTER_OK');
+  assert.equal(typeof request.generation, 'string');
+  assert.equal(BigInt(request.generation), (1n << 64n) - 1n);
+  assert.equal(ack.generation, request.generation);
+  assert.equal(ack.tunnel_id, request.tunnel_id);
+  assert.equal(MAX_TUNNEL_ID_SIZE, 128);
+  assert.deepEqual(REGISTER_ERROR_CODES, {
+    INVALID: 'REGISTER_INVALID',
+    FORBIDDEN: 'REGISTER_FORBIDDEN',
+    STALE: 'REGISTER_STALE',
+    CAPACITY: 'REGISTER_CAPACITY',
+    CONFLICT: 'REGISTER_CONFLICT',
+  });
+  assert.equal(payload('REGISTER_ERROR').code, REGISTER_ERROR_CODES.STALE);
 });
 
 test('all shared fixtures have exact network-order headers and payload bytes', () => {

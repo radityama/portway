@@ -217,6 +217,11 @@ Every frame must validate:
 
 Invalid frames must result in a controlled protocol error or connection termination.
 
+The v1 wire values, zero flags/reserved bytes, connection/stream ID rules, and
+bounded capability negotiation are specified in [PROTOCOL.md](./PROTOCOL.md).
+Framing rejects invalid headers before payload allocation; session-level state
+transitions are enforced by the later handshake and stream implementations.
+
 ## 12. Flow Control
 
 Every stream needs bounded flow control.

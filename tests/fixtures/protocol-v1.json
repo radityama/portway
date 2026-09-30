@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "header_size": 16,
+  "max_payload_size": 4194304,
+  "max_handshake_payload_size": 4096,
+  "max_capabilities": 32,
+  "max_capability_name_size": 64,
+  "capabilities": {
+    "MULTIPLEXING": "multiplexing",
+    "FLOW_CONTROL": "flow_control",
+    "HEARTBEAT": "heartbeat",
+    "GRACEFUL_SHUTDOWN": "graceful_shutdown"
+  },
+  "frames": [
+    {
+      "name": "HELLO",
+      "type": 1,
+      "stream_id": "0",
+      "payload_hex": "7b2276657273696f6e223a312c226361706162696c6974696573223a5b5d2c226d61785f7061796c6f61645f73697a65223a343139343330347d",
+      "wire_hex": "0101000000000000000000000000003a7b2276657273696f6e223a312c226361706162696c6974696573223a5b5d2c226d61785f7061796c6f61645f73697a65223a343139343330347d"
+    },
+    {
+      "name": "HELLO_ACK",
+      "type": 2,
+      "stream_id": "0",
+      "payload_hex": "7b2276657273696f6e223a312c226361706162696c6974696573223a5b5d2c226d61785f7061796c6f61645f73697a65223a36353533367d",
+      "wire_hex": "010200000000000000000000000000387b2276657273696f6e223a312c226361706162696c6974696573223a5b5d2c226d61785f7061796c6f61645f73697a65223a36353533367d"
+    },
+    {
+      "name": "AUTH",
+      "type": 3,
+      "stream_id": "0",
+      "payload_hex": "7b7d",
+      "wire_hex": "010300000000000000000000000000027b7d"
+    },
+    {
+      "name": "AUTH_OK",
+      "type": 4,
+      "stream_id": "0",
+      "payload_hex": "7b7d",
+      "wire_hex": "010400000000000000000000000000027b7d"
+    },
+    {
+      "name": "AUTH_ERROR",
+      "type": 5,
+      "stream_id": "0",
+      "payload_hex": "7b7d",
+      "wire_hex": "010500000000000000000000000000027b7d"
+    },
+    {
+      "name": "REGISTER",
+      "type": 6,
+      "stream_id": "0",
+      "payload_hex": "7b7d",
+      "wire_hex": "010600000000000000000000000000027b7d"
+    },
+    {
+      "name": "REGISTER_OK",
+      "type": 7,
+      "stream_id": "0",
+      "payload_hex": "7b7d",
+      "wire_hex": "010700000000000000000000000000027b7d"
+    },
+    {
+      "name": "REGISTER_ERROR",
+      "type": 8,
+      "stream_id": "0",
+      "payload_hex": "7b7d",
+      "wire_hex": "010800000000000000000000000000027b7d"
+    },
+    {
+      "name": "PING",
+      "type": 9,
+      "stream_id": "0",
+      "payload_hex": "7b7d",
+      "wire_hex": "010900000000000000000000000000027b7d"
+    },
+    {
+      "name": "PONG",
+      "type": 10,
+      "stream_id": "0",
+      "payload_hex": "7b7d",
+      "wire_hex": "010a00000000000000000000000000027b7d"
+    },
+    {
+      "name": "OPEN_STREAM",
+      "type": 16,
+      "stream_id": "42",
+      "payload_hex": "7b7d",
+      "wire_hex": "01100000000000000000002a000000027b7d"
+    },
+    {
+      "name": "OPEN_STREAM_OK",
+      "type": 17,
+      "stream_id": "42",
+      "payload_hex": "7b7d",
+      "wire_hex": "01110000000000000000002a000000027b7d"
+    },
+    {
+      "name": "OPEN_STREAM_ERROR",
+      "type": 18,
+      "stream_id": "42",
+      "payload_hex": "7b7d",
+      "wire_hex": "01120000000000000000002a000000027b7d"
+    },
+    {
+      "name": "DATA",
+      "type": 19,
+      "stream_id": "18446744073709551615",
+      "payload_hex": "00ff1020deadbeef",
+      "wire_hex": "01130000ffffffffffffffff0000000800ff1020deadbeef"
+    },
+    {
+      "name": "WINDOW_UPDATE",
+      "type": 20,
+      "stream_id": "42",
+      "payload_hex": "7b7d",
+      "wire_hex": "01140000000000000000002a000000027b7d"
+    },
+    {
+      "name": "CLOSE_STREAM",
+      "type": 21,
+      "stream_id": "42",
+      "payload_hex": "7b7d",
+      "wire_hex": "01150000000000000000002a000000027b7d"
+    },
+    {
+      "name": "RESET_STREAM",
+      "type": 22,
+      "stream_id": "42",
+      "payload_hex": "7b7d",
+      "wire_hex": "01160000000000000000002a000000027b7d"
+    },
+    {
+      "name": "GOAWAY",
+      "type": 23,
+      "stream_id": "0",
+      "payload_hex": "7b7d",
+      "wire_hex": "011700000000000000000000000000027b7d"
+    }
+  ]
+}

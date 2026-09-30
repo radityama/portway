@@ -7,17 +7,24 @@ linting, tests, builds, environment initialization, development supervision, and
 CI are configured. See [PHASE_0.md](./PHASE_0.md) for the delivery boundary and
 acceptance commands.
 
-The next implementation phase is Phase 1: protocol compatibility, validation,
-partial I/O, and fuzz coverage. Authenticated TLS, tunnel registration, public
-forwarding, database migrations, and dashboard features remain scheduled in
-later phases.
+## Phase 1
+
+The protocol package now implements v1 framing, explicit message values, header
+validation before payload allocation, configurable frame limits, complete
+partial writes, and bounded version/capability negotiation. Shared fixtures
+verify Go and TypeScript compatibility. Unit, pipe I/O, race, and active fuzz
+checks cover failure behavior. See [PHASE_1.md](./PHASE_1.md).
+
+The next phase is Phase 2: authenticated agent-to-relay TLS and connection
+lifecycle. Tunnel registration, public forwarding, database migrations, and
+dashboard features remain scheduled in later phases.
 
 ## What this starter contains
 
 - monorepo layout for agent, relay, API, dashboard, shared packages, and docs
 - PostgreSQL schema implementation matching the Prisma baseline in `docs/DATABASE.md`
 - OpenAPI contract derived from `docs/API.md`
-- versioned protocol framing skeleton
+- implemented versioned protocol framing and capability-negotiation package
 - relay/agent Go skeletons
 - control-plane HTTP API scaffold
 - Docker Compose for PostgreSQL and Redis
@@ -37,6 +44,7 @@ Run the following locally when the required toolchains/dependencies are installe
 ```bash
 make setup
 make check
+make fuzz
 pnpm db:validate
 pnpm test:bootstrap
 ```

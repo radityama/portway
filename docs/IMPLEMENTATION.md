@@ -138,6 +138,12 @@ Tests:
 
 Do not implement public HTTP routing yet.
 
+Phase 1 is implemented with explicit v1 wire constants, synchronous bounded
+codecs, strict `HELLO`/`HELLO_ACK` payloads, deterministic capability negotiation,
+shared Go/TypeScript fixtures, failure-oriented I/O tests, and three fuzz targets.
+See [PHASE_1.md](./PHASE_1.md) for acceptance checks and [PROTOCOL.md](./PROTOCOL.md)
+for the contract. Authentication and the live session handshake remain Phase 2.
+
 ## 6. Phase 2 — Agent ↔ Relay Connection
 
 Implement:

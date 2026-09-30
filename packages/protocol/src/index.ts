@@ -1,4 +1,30 @@
 export const PROTOCOL_VERSION = 1 as const;
+export const FRAME_HEADER_SIZE = 16 as const;
+export const MAX_PAYLOAD_SIZE = 4 * 1024 * 1024;
+export const MAX_HANDSHAKE_PAYLOAD_SIZE = 4096 as const;
+export const MAX_CAPABILITIES = 32 as const;
+export const MAX_CAPABILITY_NAME_SIZE = 64 as const;
+
+// Names are shared contracts; advertising one requires its implementation.
+export const CAPABILITIES = {
+  MULTIPLEXING: 'multiplexing',
+  FLOW_CONTROL: 'flow_control',
+  HEARTBEAT: 'heartbeat',
+  GRACEFUL_SHUTDOWN: 'graceful_shutdown',
+} as const;
+
+export interface Hello {
+  version: typeof PROTOCOL_VERSION;
+  capabilities: string[];
+  required_capabilities?: string[];
+  max_payload_size: number;
+}
+
+export interface HelloAck {
+  version: typeof PROTOCOL_VERSION;
+  capabilities: string[];
+  max_payload_size: number;
+}
 
 export const FRAME_TYPES = {
   HELLO: 0x01,

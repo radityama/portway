@@ -62,7 +62,7 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 			deadline = ctxDeadline
 		}
 		_ = conn.SetReadDeadline(deadline)
-		frame, err := protocol.Decode(reader)
+		frame, err := protocol.DecodeWithLimit(reader, s.MaxFrame)
 		if err != nil {
 			return err
 		}

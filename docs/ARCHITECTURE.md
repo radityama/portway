@@ -219,6 +219,11 @@ TLS / network
 
 The protocol defines framing, stream IDs, flow control, lifecycle messages, capabilities, and versioning.
 
+Phase 1 provides synchronous, bounded framing and capability negotiation as
+specified in [PROTOCOL.md](./PROTOCOL.md). Transport/session callers own socket
+deadlines, cancellation, serialized writes, and connection closure; the codec
+creates no background goroutines. Live authenticated TLS begins in Phase 2.
+
 ## 9. Multiplexing
 
 One agent-to-relay connection should support many concurrent logical streams:

@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts"
   },
   "devDependencies": {
     "typescript": "5.9.2"

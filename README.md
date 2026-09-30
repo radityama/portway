@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phase 0 provides a reproducible development workspace. The API, dashboard, and relay are skeletons. The CLI currently checks whether a local port is reachable; authenticated connections and public forwarding are implemented in Phases 1–4.
+Phases 0–1 provide a reproducible development workspace and a validated v1 protocol package with bounded capability negotiation. The API, dashboard, and relay are skeletons. The CLI currently checks whether a local port is reachable; authenticated connections and public forwarding are scheduled for Phases 2–4.
 
-See [Phase 0](./docs/PHASE_0.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -61,11 +61,12 @@ PORTWAY_JSON=1 go run ./cmd/portway 3000
 
 ```bash
 make check
+make fuzz
 pnpm db:validate
 pnpm test:bootstrap
 ```
 
-`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, and production builds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
+`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, and production builds. `make fuzz` actively fuzzes decoding, encoding round trips, and handshake payloads for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
 
 Stop the development stack before running production builds; Next.js uses the same `.next/` directory for both.
 

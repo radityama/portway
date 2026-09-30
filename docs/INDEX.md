@@ -17,6 +17,7 @@
 - [Decisions](./DECISIONS.md) — architecture decision notes
 - [Starter Status](./STARTER_STATUS.md) — what is scaffolded and what still requires implementation
 - [Phase 0](./PHASE_0.md) — bootstrap deliverables, acceptance checks, and the next implementation boundary
+- [Phase 1](./PHASE_1.md) — protocol framing, negotiation, compatibility, and failure tests
 
 ## Contract hierarchy
 

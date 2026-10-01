@@ -93,6 +93,7 @@ func (c *Conn) receiveData(id uint64, payload []byte) error {
 		c.queuedBytes += count
 		payload = payload[count:]
 	}
+	c.touchLocked(s)
 	c.notifyLocked()
 	return nil
 }
@@ -140,6 +141,7 @@ func (c *Conn) read(s *Stream, p []byte) (int, error) {
 				s.pendingWindow += uint32(n)
 			}
 			c.wakeControlLocked()
+			c.touchLocked(s)
 			c.mu.Unlock()
 			return n, nil
 		}

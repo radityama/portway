@@ -375,6 +375,13 @@ reconnect with reason `relay_draining`; REGISTER_DRAINING is also retryable.
 Diagnostic registrations drain their connection without reconnecting. Existing
 exit codes remain unchanged. These are CLI/protocol changes; REST is unchanged.
 
+Phase 8 keeps CLI commands, JSON events and exit codes unchanged. Negotiated
+WebSocket and streaming requests use application idle timeouts configured by
+PORTWAY_STREAM_TIMEOUT and RELAY_STREAM_TIMEOUT (30s by default, positive and at
+most 5m), while older peers retain whole-request timeouts. Application events or
+WebSocket ping/pong must occur within that interval. This data-plane change adds
+no REST operation; the OpenAPI contract remains unchanged.
+
 ## 13. Pagination
 
 Collection APIs should support cursor pagination:

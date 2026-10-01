@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/radityama/portway/internal/protocol"
 )
@@ -31,6 +32,8 @@ type Stream struct {
 	pendingWindow uint32
 	pages         []*receivePage
 	buffered      int
+	lastActivity  time.Time
+	idleExpired   bool
 }
 
 func (s *Stream) Context() context.Context { return s.ctx }
@@ -59,6 +62,9 @@ func (s *Stream) Write(p []byte) (int, error) {
 			return total, err
 		}
 		total += n
+		s.parent.mu.Lock()
+		s.parent.touchLocked(s)
+		s.parent.mu.Unlock()
 		p = p[n:]
 	}
 	return total, nil

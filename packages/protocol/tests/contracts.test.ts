@@ -22,6 +22,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_TIMEOUT_MS,
 } from '../src/index.ts';
+import type { OpenStream } from '../src/index.ts';
 
 const fixtures = JSON.parse(
   readFileSync(
@@ -29,6 +30,26 @@ const fixtures = JSON.parse(
     'utf8',
   ),
 );
+
+test('WebSocket shares the optional OPEN_STREAM upgrade marker and legacy fields', () => {
+  const frame = fixtures.websocket.open;
+  const wire = Buffer.from(frame.wire_hex, 'hex');
+  const open: OpenStream = JSON.parse(
+    Buffer.from(frame.payload_hex, 'hex').toString(),
+  );
+  assert.equal(open.upgrade, 'websocket');
+  assert.equal(open.method, 'GET');
+  assert.equal(open.content_length, 0);
+  assert.equal(wire[1], FRAME_TYPES.OPEN_STREAM);
+  assert.equal(wire.readBigUInt64BE(4), 1n);
+  assert.equal(wire.readUInt32BE(12), wire.length - FRAME_HEADER_SIZE);
+  assert.deepEqual(
+    wire.subarray(FRAME_HEADER_SIZE),
+    Buffer.from(frame.payload_hex, 'hex'),
+  );
+  assert.equal(CAPABILITIES.WEBSOCKET, 'websocket');
+  assert.equal(CAPABILITIES.STREAMING, 'streaming');
+});
 
 test('heartbeat fixtures share strict nonce/timestamp payloads and timing', () => {
   assert.equal(HEARTBEAT_INTERVAL_MS, fixtures.heartbeat.interval_ms);

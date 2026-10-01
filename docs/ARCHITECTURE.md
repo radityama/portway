@@ -438,6 +438,19 @@ Owner-aware unregister retains generation watermarks. Legacy peers receive no
 new messages. No database, API or durable model participates in shutdown.
 See [PHASE_7.md](./PHASE_7.md) for the compatibility and verification boundary.
 
+Phase 8 negotiates `streaming` and `websocket` for HTTP registrations. A validated
+WebSocket marker changes only the upgrade stream's handshake; DATA/credit and
+FIN/RESET preserve duplex frames without complete-message buffering. Both HTTP
+boundaries retain pipelined frames. SSE headers and chunks flush promptly.
+Streaming sessions replace the whole-request timeout with application idle
+supervision by one owned mux worker. Application progress refreshes the timer;
+heartbeat/credit messages do not. Socket deadlines and cancellation interrupt
+blocked I/O. Upgraded public sockets remain tracked by listener admission and
+request-handler ownership through graceful or forced shutdown. Credential,
+generation, body/header and memory bounds remain in force; upgraded frames use
+the stream/credit bounds rather than ordinary HTTP body byte caps. No dependency,
+REST or durable model is introduced. See [PHASE_8.md](./PHASE_8.md).
+
 ## 20. Timeouts
 
 Every network operation needs explicit timeout behavior, including:

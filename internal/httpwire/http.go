@@ -31,38 +31,53 @@ func StripHopHeaders(h http.Header) {
 // ReadResponse parses only bounded headers. Callers own and close the transport
 // on errors; closing a rejected response body here could drain an untrusted body.
 func ReadResponse(reader *bufio.Reader, request *http.Request) (*http.Response, error) {
+	response, _, err := readResponse(reader, request, false)
+	return response, err
+}
+
+// ReadResponseUpgrade also returns the exact reader owning buffered post-header
+// bytes. A 101 is permitted here only; callers must validate its handshake.
+func ReadResponseUpgrade(reader *bufio.Reader, request *http.Request) (*http.Response, io.Reader, error) {
+	return readResponse(reader, request, true)
+}
+
+func readResponse(reader *bufio.Reader, request *http.Request, upgrade bool) (*http.Response, io.Reader, error) {
 	for n := 0; n < 8; n++ {
 		var header []byte
 		for {
 			part, err := reader.ReadSlice('\n')
 			if len(header)+len(part) > protocol.MaxHTTPHeaderSize {
-				return nil, ErrHeaders
+				return nil, nil, ErrHeaders
 			}
 			header = append(header, part...)
 			if errors.Is(err, bufio.ErrBufferFull) {
 				continue
 			}
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if bytes.HasSuffix(header, []byte("\r\n\r\n")) {
 				break
 			}
 		}
-		response, err := http.ReadResponse(bufio.NewReader(io.MultiReader(bytes.NewReader(header), reader)), request)
+		parsed := bufio.NewReader(io.MultiReader(bytes.NewReader(header), reader))
+		response, err := http.ReadResponse(parsed, request)
 		if err != nil {
-			return nil, ErrHeaders
+			return nil, nil, ErrHeaders
 		}
-		if response.StatusCode == http.StatusSwitchingProtocols || len(response.Trailer) > 0 {
-			return nil, ErrHeaders
+		if len(response.Trailer) > 0 || len(response.Header.Values("Trailer")) > 0 || response.StatusCode == http.StatusSwitchingProtocols && !upgrade {
+			return nil, nil, ErrHeaders
+		}
+		if response.StatusCode == http.StatusSwitchingProtocols {
+			return response, parsed, nil
 		}
 		if response.StatusCode < 200 {
 			response.Body.Close()
 			continue
 		}
-		return response, nil
+		return response, parsed, nil
 	}
-	return nil, ErrHeaders
+	return nil, nil, ErrHeaders
 }
 
 type LimitedBody struct {

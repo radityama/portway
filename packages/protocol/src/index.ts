@@ -30,6 +30,7 @@ export interface OpenStream {
   host: string;
   headers: [string, string][];
   content_length: number;
+  upgrade?: 'websocket';
 }
 export const STREAM_ERROR_CODES = {
   UNAVAILABLE: 'UPSTREAM_UNAVAILABLE',
@@ -88,6 +89,8 @@ export const CAPABILITIES = {
   FLOW_CONTROL: 'flow_control',
   HEARTBEAT: 'heartbeat',
   GRACEFUL_SHUTDOWN: 'graceful_shutdown',
+  STREAMING: 'streaming',
+  WEBSOCKET: 'websocket',
 } as const;
 
 export interface Hello {

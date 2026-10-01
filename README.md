@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–7 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. The API and dashboard are skeletons.
+Phases 0–8 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API and dashboard are skeletons.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -120,14 +120,17 @@ for registration settings and relay-restart limits.
 Public ingress has its own `PUBLIC_BIND_HOST`, `PUBLIC_PORT`,
 `PUBLIC_TLS_CERT_FILE`, and `PUBLIC_TLS_KEY_FILE`. Exposing it requires DNS and
 a certificate covering the assigned hostnames. Phase 4 supports ordinary HTTP
-with 32 streams per tunnel, 30-second stream deadlines, 16 MiB request bodies,
-64 MiB response bodies, and bounded headers. HTTP/2, upgrades, CONNECT, and
-trailers are not enabled. Phase 5 queues at most 64 KiB per stream and 1 MiB per
+with 32 streams per tunnel, 16 MiB request bodies, 64 MiB response bodies, and
+bounded headers. Phase 8 supports WebSocket version 13, SSE and chunked streaming.
+Negotiated `streaming` uses a 30-second application idle timeout; older peers keep
+the whole-request deadline. Set `RELAY_STREAM_TIMEOUT` and `PORTWAY_STREAM_TIMEOUT`
+(positive durations up to 5m) for application heartbeat/event intervals. WebSocket
+compression, HTTP/2, CONNECT, generic upgrades and trailers remain unavailable. Phase 5 queues at most 64 KiB per stream and 1 MiB per
 connection. A stalled consumer no longer blocks the shared frame reader; many
 stalled streams can still fill the shared budget. Update agent and relay together:
 HTTP requires negotiated `multiplexing` and `flow_control`. See
 [Phase 4](./docs/PHASE_4.md) for HTTP settings and [Phase 5](./docs/PHASE_5.md)
-for flow-control bounds and upgrade behavior. Negotiated heartbeat probes every 15s and requires a matching reply within 45s; see [Phase 6](./docs/PHASE_6.md) for recovery policy and terminal errors. Graceful shutdown defaults to 10s; set `PORTWAY_SHUTDOWN_TIMEOUT` or `RELAY_SHUTDOWN_TIMEOUT` to a positive duration up to 1m. See [Phase 7](./docs/PHASE_7.md).
+for flow-control bounds. See [Phase 8](./docs/PHASE_8.md) for WebSocket and streaming semantics. Negotiated heartbeat probes every 15s and requires a matching reply within 45s; see [Phase 6](./docs/PHASE_6.md) for recovery policy and terminal errors. Graceful shutdown defaults to 10s; set `PORTWAY_SHUTDOWN_TIMEOUT` or `RELAY_SHUTDOWN_TIMEOUT` to a positive duration up to 1m. See [Phase 7](./docs/PHASE_7.md).
 
 ## Quality gates
 
@@ -138,7 +141,7 @@ pnpm db:validate
 pnpm test:bootstrap
 ```
 
-`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, and production builds. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, and stream/window payloads for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
+`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, and production builds. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, stream/window payloads, and WebSocket response headers for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
 
 Stop the development stack before running production builds; Next.js uses the same `.next/` directory for both.
 

@@ -182,11 +182,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpFailure(w, "method unavailable", 405)
 		return
 	}
-	if r.Header.Get("Upgrade") != "" || strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") {
-		httpFailure(w, "HTTP upgrades unavailable", 501)
-		return
+	upgrade := r.Header.Get("Upgrade") != "" || protocol.HeaderHasToken(r.Header, "Connection", "upgrade")
+	if upgrade {
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			httpFailure(w, "HTTP upgrade unavailable", 501)
+			return
+		}
+		if !httpwire.WebSocketRequest(r) {
+			httpFailure(w, "invalid WebSocket upgrade", 400)
+			return
+		}
 	}
-	if len(r.Trailer) > 0 {
+	if len(r.Trailer) > 0 || len(r.Header.Values("Trailer")) > 0 {
 		httpFailure(w, "HTTP trailers unavailable", 400)
 		return
 	}
@@ -235,8 +242,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpFailure(w, "tunnel unavailable", 503)
 		return
 	}
+	if upgrade && !session.WebSocket() {
+		httpFailure(w, "WebSocket capability unavailable", 501)
+		return
+	}
 	header := r.Header.Clone()
 	httpwire.StripHopHeaders(header)
+	if upgrade {
+		header.Del("Sec-WebSocket-Extensions")
+	}
 	for key := range header {
 		if strings.EqualFold(key, "Forwarded") || strings.HasPrefix(strings.ToLower(key), "x-forwarded-") {
 			header.Del(key)
@@ -254,30 +268,68 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	open := protocol.OpenStream{Method: r.Method, Target: r.URL.RequestURI(), Host: host, Headers: pairs, ContentLength: r.ContentLength}
+	if upgrade {
+		open.Upgrade = "websocket"
+	}
 	if err := open.Validate(); err != nil {
+		if upgrade {
+			httpFailure(w, "invalid WebSocket upgrade", 400)
+			return
+		}
 		httpFailure(w, "invalid or oversized request headers", 431)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.StreamTimeout)
+	ctx, cancel := context.WithCancel(r.Context())
+	if !session.Streaming() {
+		cancel()
+		ctx, cancel = context.WithTimeout(r.Context(), s.StreamTimeout)
+	}
 	defer cancel()
+	controller := http.NewResponseController(w)
+	if session.Streaming() {
+		_ = controller.SetWriteDeadline(time.Time{})
+	}
 	stream, err := session.Open(ctx, open)
 	if err != nil {
+		_ = controller.SetWriteDeadline(time.Now().Add(s.WriteTimeout))
 		httpFailure(w, "tunnel stream unavailable", streamStatus(ctx, err))
 		return
 	}
-	controller := http.NewResponseController(w)
+	if upgrade {
+		s.serveWebSocket(w, r, stream, header)
+		return
+	}
 	_ = controller.EnableFullDuplex()
+	refreshWrite := func() {
+		if session.Streaming() {
+			_ = controller.SetWriteDeadline(time.Now().Add(s.StreamTimeout))
+		}
+	}
 	uploaded := make(chan struct{})
 	uploadResult := make(chan struct{})
 	stopUpload := make(chan struct{})
 	successfulResponse := false // Published to the upload worker by stopUpload.
 	var responseBody io.Closer
 	var uploadErr error
+	var idleBody *idleRequestBody
+	if session.Streaming() {
+		idleBody = &idleRequestBody{ReadCloser: r.Body, controller: controller, timeout: s.StreamTimeout}
+	}
 	go func() {
 		defer close(uploaded)
-		limitedBody := http.MaxBytesReader(nil, r.Body, protocol.MaxRequestBodySize)
+		var source io.ReadCloser = r.Body
+		if idleBody != nil {
+			source = idleBody
+		}
+		limitedBody := http.MaxBytesReader(nil, source, protocol.MaxRequestBodySize)
 		_, uploadErr = io.Copy(stream, limitedBody)
 		if uploadErr == nil {
+			// net/http can already be watching this socket for disconnect.
+			// A finished upload must not leave a read deadline that cancels
+			// an active one-way SSE response through that background reader.
+			if idleBody != nil {
+				idleBody.complete()
+			}
 			uploadErr = stream.CloseWrite()
 		}
 		close(uploadResult)
@@ -308,7 +360,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				deadline = streamDeadline
 			}
 		}
-		_ = controller.SetReadDeadline(deadline)
+		if idleBody != nil {
+			idleBody.expireAt(deadline)
+		} else {
+			_ = controller.SetReadDeadline(deadline)
+		}
 		close(stopUpload)
 		stream.Close()
 		if responseBody != nil {
@@ -317,6 +373,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		<-uploaded
 		r.Body.Close()
 		_ = controller.SetReadDeadline(time.Time{})
+		_ = controller.SetWriteDeadline(time.Time{})
 	}()
 	response, err := httpwire.ReadResponse(bufio.NewReader(stream), r)
 	if err != nil {
@@ -332,12 +389,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Cleanup interrupts unread input with a deadline. That can cancel the
 		// HTTP connection's context permanently; do not reuse it for a new request.
 		w.Header().Set("Connection", "close")
+		refreshWrite()
 		httpFailure(w, "upstream response unavailable", status)
 		return
 	}
 	responseBody = response.Body
 	if response.ContentLength > protocol.MaxResponseBodySize {
 		w.Header().Set("Connection", "close")
+		refreshWrite()
 		httpFailure(w, "upstream response exceeds limit", 502)
 		return
 	}
@@ -350,12 +409,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if response.ContentLength >= 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(response.ContentLength, 10))
 	}
+	refreshWrite()
 	w.WriteHeader(response.StatusCode)
+	if err := controller.Flush(); err != nil {
+		return
+	}
 	body := &httpwire.LimitedBody{Reader: response.Body, Remaining: protocol.MaxResponseBodySize}
 	buffer := make([]byte, protocol.MaxDataSize)
 	for {
 		n, readErr := body.Read(buffer)
 		if n > 0 {
+			refreshWrite()
 			if _, err := w.Write(buffer[:n]); err != nil {
 				return
 			}
@@ -370,9 +434,45 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			panic(http.ErrAbortHandler)
 		}
 	}
+	refreshWrite()
 	if controller.Flush() == nil {
 		successfulResponse = true
 	}
+}
+
+type idleRequestBody struct {
+	io.ReadCloser
+	controller *http.ResponseController
+	timeout    time.Duration
+	mu         sync.Mutex
+	cutoff     time.Time
+}
+
+func (b *idleRequestBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	deadline := time.Now().Add(b.timeout)
+	if !b.cutoff.IsZero() && b.cutoff.Before(deadline) {
+		deadline = b.cutoff
+	}
+	err := b.controller.SetReadDeadline(deadline)
+	b.mu.Unlock()
+	if err != nil {
+		return 0, err
+	}
+	return b.ReadCloser.Read(p)
+}
+func (b *idleRequestBody) complete() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.cutoff.IsZero() {
+		_ = b.controller.SetReadDeadline(time.Time{})
+	}
+}
+func (b *idleRequestBody) expireAt(deadline time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.cutoff = deadline
+	_ = b.controller.SetReadDeadline(deadline)
 }
 func streamStatus(ctx context.Context, err error) int {
 	if errors.Is(err, protocol.ErrPayloadTooLarge) {

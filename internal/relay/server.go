@@ -187,7 +187,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	if err != nil || remote.MaxPayloadSize < protocol.MaxHandshakePayloadSize {
 		return protocol.ErrInvalidHandshake
 	}
-	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat, protocol.CapabilityGracefulShutdown}, MaxPayloadSize: s.MaxFrame})
+	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat, protocol.CapabilityGracefulShutdown, protocol.CapabilityStreaming, protocol.CapabilityWebSocket}, MaxPayloadSize: s.MaxFrame})
 	if err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	graceful := slices.Contains(ack.Capabilities, protocol.CapabilityGracefulShutdown)
 	httpMode := request.Protocol == "http"
 	if httpMode || heartbeat || graceful {
-		streams, err = mux.New(ctx, conn, reader, mux.Options{MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt, Diagnostic: !httpMode, Heartbeat: heartbeat, GracefulShutdown: graceful, ShutdownTimeout: s.ShutdownTimeout})
+		streams, err = mux.New(ctx, conn, reader, mux.Options{MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt, Diagnostic: !httpMode, Heartbeat: heartbeat, GracefulShutdown: graceful, ShutdownTimeout: s.ShutdownTimeout, Streaming: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), WebSocket: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming) && slices.Contains(ack.Capabilities, protocol.CapabilityWebSocket)})
 		if err != nil {
 			return err
 		}

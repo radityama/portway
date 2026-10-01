@@ -69,6 +69,8 @@ func TestStrictStreamMetadataAndCaps(t *testing.T) {
 	}
 }
 func FuzzStreamPayloads(f *testing.F) {
+	upgrade, _ := EncodeOpenStream(1, websocketOpen())
+	f.Add(upgrade.Payload)
 	for _, fixture := range loadFixtures(f).Frames {
 		if fixture.Type >= 0x10 && fixture.Type <= 0x16 {
 			payload, _ := hex.DecodeString(fixture.PayloadHex)

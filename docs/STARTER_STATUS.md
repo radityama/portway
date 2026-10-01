@@ -67,7 +67,18 @@ join workers. Relay drain returns 503 for new public requests, rejects new tunne
 connections, and retains ownership watermarks. Remote draining schedules normal
 port-invocation reconnect; diagnostics exit without reconnect. See [PHASE_7.md](./PHASE_7.md).
 
-The next phase is Phase 8: WebSocket upgrades and streaming refinements.
+## Phase 8
+
+Negotiated WebSocket version 13 upgrades validate both handshakes and preserve
+buffered, masked, text/binary, fragmented and control frames over bounded duplex
+streams. SSE headers/events and chunked request/response bodies forward
+incrementally. Application idle supervision supports active long-lived streams;
+legacy peers retain ordinary HTTP metadata and whole-request deadlines. Socket
+admission, cancellation, supersession and graceful/forced shutdown include
+upgraded connections. Compression, generic upgrades, HTTP/2 and trailers remain
+unsupported. See [PHASE_8.md](./PHASE_8.md).
+
+The next phase is Phase 9: the control-plane API and agent bootstrap integration.
 Durable credential issuance, database migrations, and dashboard features remain
 later work.
 
@@ -83,6 +94,7 @@ later work.
 - stream/connection credit windows, bounded receive pages, and backpressure
 - registered-session heartbeat and cancellable CLI reconnect with fresh generations
 - negotiated drain completion and deadline-bound agent/relay signal shutdown
+- validated WebSocket upgrades, incremental SSE/chunked HTTP and streaming idle lifetimes
 - control-plane HTTP API scaffold
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification

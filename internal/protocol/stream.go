@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/textproto"
 	"net/url"
 	"strings"
@@ -22,6 +23,7 @@ type OpenStream struct {
 	Host          string     `json:"host"`
 	Headers       [][]string `json:"headers"`
 	ContentLength int64      `json:"content_length"`
+	Upgrade       string     `json:"upgrade,omitempty"`
 }
 
 func HTTPToken(s string) bool {
@@ -68,6 +70,15 @@ func (o OpenStream) Validate() error {
 	if total > MaxHTTPHeaderSize {
 		return ErrPayloadTooLarge
 	}
+	if o.Upgrade != "" {
+		h := make(http.Header)
+		for _, pair := range o.Headers {
+			h.Add(pair[0], pair[1])
+		}
+		if o.Upgrade != "websocket" || o.Method != "GET" || o.ContentLength != 0 || !ValidWebSocketMetadata(h) {
+			return ErrInvalidHandshake
+		}
+	}
 	return nil
 }
 
@@ -95,8 +106,15 @@ func DecodeOpenStream(f Frame) (OpenStream, error) {
 		return o, ErrInvalidHandshake
 	}
 	keys := []string{"method", "target", "host", "headers", "content_length"}
-	if err := decodeObject(f.Payload, &o, keys, keys, keys); err != nil {
+	allowed := append(append([]string{}, keys...), "upgrade")
+	if err := decodeObject(f.Payload, &o, allowed, keys, allowed); err != nil {
 		return OpenStream{}, err
+	}
+	// An explicitly present upgrade must select a supported protocol.
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(f.Payload, &fields)
+	if _, exists := fields["upgrade"]; exists && o.Upgrade == "" {
+		return OpenStream{}, ErrInvalidHandshake
 	}
 	if err := o.Validate(); err != nil {
 		return OpenStream{}, err

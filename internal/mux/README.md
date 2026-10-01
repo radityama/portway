@@ -29,3 +29,11 @@ closing over queued response data. The first deadline cannot be extended.
 `Close` and lifetime cancellation still abort immediately. Legacy accepting
 endpoints wait for peer closure/deadline because they lack completion proof.
 See [Phase 7](../../docs/PHASE_7.md).
+
+Phase 8 adds one owned idle timer worker for negotiated streaming peers. Activity
+is guarded by Conn.mu, refreshed on DATA writes/receipts/consumption and never
+by heartbeat or credit updates. An expired stream is marked under the same lock
+before RESET, preventing later activity from reviving it. Legacy peers keep their
+whole-stream context deadlines. Upgraded sessions use the same stream and page
+bounds; an upgrade marker without negotiated WebSocket support is terminal input.
+See [Phase 8](../../docs/PHASE_8.md).

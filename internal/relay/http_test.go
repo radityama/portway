@@ -57,6 +57,7 @@ func setupHTTP(t *testing.T, handler http.HandlerFunc, configure func(*relay.Ser
 		return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, network, listener.Addr().String())
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
+	f.client.StreamTimeout = f.server.StreamTimeout
 	session := connected(t, f)
 	ack, err := session.Register(context.Background(), protocol.Register{TunnelID: "tnl_local_dev", Generation: 1, Protocol: "http"})
 	if err != nil {
@@ -191,7 +192,7 @@ func TestHTTPSRoutingAndUnsupportedRequests(t *testing.T) {
 		{"unassigned.portway.localhost", "GET", "", 404},
 		{"different.portway.localhost", "GET", "", 421},
 		{"bad@host", "GET", "", 400},
-		{"", "CONNECT", "", 405}, {"", "GET", "websocket", 501},
+		{"", "CONNECT", "", 405}, {"", "GET", "websocket", 400},
 	} {
 		target := f.url + "/"
 		if entry.status == 404 {

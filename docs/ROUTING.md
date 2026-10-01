@@ -179,12 +179,14 @@ The stream carries HTTP request metadata and request body bytes to a fixed
 loopback TCP endpoint; public metadata never chooses that endpoint. The agent
 returns a serialized HTTP/1.1 response and streams its body. FIN closes only the
 sender's direction; RESET aborts both directions and closes local TCP work.
-Unsupported CONNECT, upgrades, and trailers fail before forwarding. HTTP/2,
-WebSocket support, and configurable Host rewriting remain later work.
+CONNECT, generic upgrades and trailers fail before forwarding. Phase 8 permits
+negotiated WebSocket upgrades as specified below. HTTP/2 and configurable Host
+rewriting remain later work.
 
 Phase 4 limits request bodies to 16 MiB, responses to 64 MiB, HTTP metadata to
 32 KiB and 128 header pairs, DATA to 16 KiB, and concurrent streams to 32 by
-default. Whole-stream deadlines default to 30 seconds; public TLS/header reads
+default. Legacy whole-stream deadlines default to 30 seconds; negotiated
+Phase 8 streaming uses application idle timeouts instead. Public TLS/header reads
 have a 5-second deadline. Stream saturation returns 503, local dial/invalid
 upstream failures 502, deadlines 504, oversized requests 413, and oversized
 metadata 431. SNI mismatches return 421. A body failure after response headers
@@ -388,13 +390,40 @@ Agent
 Local service
 ```
 
-The implementation must preserve bidirectional semantics and avoid buffering one side indefinitely.
+Phase 8 implements version 13 upgrades with optional `websocket` and `streaming`
+capabilities. Request method, key, version, body absence and Connection tokens
+are validated before forwarding. A bounded 101 response must prove the key,
+Upgrade and offered subprotocol before the relay hijacks its public TLS socket.
+Buffered frames at either HTTP boundary are preserved. Extension offers are
+removed; WebSocket compression is not negotiated. Failed upgrades remain HTTP.
+
+Existing DATA and credit windows forward masked, binary/text, fragmented,
+ping/pong and close frames transparently. Application endpoints own RFC6455
+frame semantics; Portway does not assemble complete messages. Both pumps use
+16 KiB buffers and join on cancellation/EOF. Upgrades retain a stream and public
+socket admission slot until cleanup, participate in graceful drain and close
+at the forced deadline. Supersession, credential expiry and transport loss abort
+without replay. See [PROTOCOL.md](./PROTOCOL.md) and [PHASE_8.md](./PHASE_8.md).
 
 ## 17. SSE and Streaming
 
 Server-Sent Events and streaming APIs must flush data promptly.
 
 Do not wait for an entire response before forwarding it.
+
+Phase 8 flushes response headers before waiting for the first body bytes, then
+flushes each read chunk. Chunked uploads reach the local service before EOF;
+chunked responses reach clients before completion. The existing 16 MiB request
+and 64 MiB response limits remain, including SSE. Trailers are unsupported.
+
+Negotiated `streaming` refreshes an application idle deadline on DATA progress,
+including reads/writes; heartbeats and credit updates cannot extend it. The
+RELAY_STREAM_TIMEOUT and PORTWAY_STREAM_TIMEOUT defaults are 30s (positive, up
+to 5m). Streaming sockets refresh operation deadlines, and a completed public
+upload clears its read deadline so HTTP disconnect monitoring cannot cancel an
+active SSE response. Parent cancellation, credential expiry and shutdown still
+bound every lifetime. Old peers retain whole-request deadlines. Applications
+should emit events or WebSocket ping/pong within their configured idle interval.
 
 This is particularly important for AI/LLM applications that emit incremental tokens.
 
@@ -505,7 +534,8 @@ the binary closes them after the drain or at its deadline.
 Port invocations finish the current drained session before scheduling recovery
 with `relay_draining`; REGISTER_DRAINING is retryable too. Other registration
 errors stay terminal. Diagnostics drain once and exit. Generation replacement
-and owner-aware unregister remain unchanged. WebSocket upgrades are Phase 8.
+and owner-aware unregister remain unchanged. Phase 8 verifies these same drain
+semantics on actual upgraded WebSocket connections, including blocked public writes.
 See [PHASE_7.md](./PHASE_7.md) and [PROTOCOL.md](./PROTOCOL.md).
 
 Local HTTP requests use one owned socket per stream. The agent closes it during

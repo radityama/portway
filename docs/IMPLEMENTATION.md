@@ -293,6 +293,13 @@ Tests:
 - long-lived SSE
 - streaming response
 
+Phase 8 implements negotiated, validated WebSocket version 13 upgrades over the
+existing bounded DATA/credit streams. Binary/text, fragmented and control frames
+remain transparent. SSE headers/events and chunked uploads/responses forward
+incrementally; streaming peers use application idle lifetimes. Legacy HTTP
+metadata/deadlines remain compatible. See [PHASE_8.md](./PHASE_8.md) for the
+verification boundary and exclusions (compression, generic upgrades, trailers).
+
 ## 13. Phase 9 — Control Plane
 
 Implement API service:

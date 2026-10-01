@@ -21,6 +21,8 @@ const (
 	CapabilityFlowControl      Capability = "flow_control"
 	CapabilityHeartbeat        Capability = "heartbeat"
 	CapabilityGracefulShutdown Capability = "graceful_shutdown"
+	CapabilityStreaming        Capability = "streaming"
+	CapabilityWebSocket        Capability = "websocket"
 )
 
 var (

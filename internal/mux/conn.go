@@ -36,6 +36,8 @@ type Options struct {
 	ShutdownTimeout   time.Duration
 	Shutdown          <-chan struct{}
 	OnDraining        func()
+	Streaming         bool
+	WebSocket         bool
 }
 type Conn struct {
 	conn      net.Conn
@@ -78,9 +80,13 @@ type Conn struct {
 	drainWake         chan struct{}
 	drainWriteDone    chan struct{}
 	drainWriteErr     error
+	idleWake          chan struct{}
 }
 
 func New(ctx context.Context, conn net.Conn, reader io.Reader, opts Options) (*Conn, error) {
+	if opts.WebSocket && !opts.Streaming {
+		return nil, ErrProtocol
+	}
 	if opts.ShutdownTimeout == 0 {
 		opts.ShutdownTimeout = 10 * time.Second
 	}
@@ -103,12 +109,15 @@ func New(ctx context.Context, conn net.Conn, reader io.Reader, opts Options) (*C
 	c := &Conn{conn: conn, reader: reader, opts: opts, ctx: life, parent: ctx, cancel: cancel, writer: make(chan struct{}, 1), opening: make(chan struct{}, 1), streams: make(map[uint64]*Stream), sendWindow: protocol.InitialConnectionWindow, recvWindow: protocol.InitialConnectionWindow, changed: make(chan struct{}), controlWake: make(chan struct{}, 1), controls: make(chan protocol.Frame, 2*opts.MaxStreams+4), heartbeatWake: make(chan struct{}, 1)}
 	c.mu.Lock()
 	c.drainWake = make(chan struct{}, 1)
+	c.idleWake = make(chan struct{}, 1)
 	c.drainWriteDone = make(chan struct{})
 	c.stop = context.AfterFunc(life, c.Close)
 	c.mu.Unlock()
 	return c, nil
 }
 func (c *Conn) ActiveStreams() int { c.mu.Lock(); defer c.mu.Unlock(); return len(c.streams) }
+func (c *Conn) Streaming() bool    { return c.opts.Streaming }
+func (c *Conn) WebSocket() bool    { return c.opts.WebSocket }
 func (c *Conn) Close() {
 	c.once.Do(func() {
 		c.mu.Lock()
@@ -145,9 +154,16 @@ func (c *Conn) remove(s *Stream) {
 	c.mu.Unlock()
 }
 func (c *Conn) newStreamLocked(ctx context.Context, id uint64) *Stream {
-	life, cancel := context.WithTimeout(ctx, c.opts.StreamTimeout)
+	var life context.Context
+	var cancel context.CancelFunc
+	if c.opts.Streaming {
+		life, cancel = context.WithCancel(ctx)
+	} else {
+		life, cancel = context.WithTimeout(ctx, c.opts.StreamTimeout)
+	}
 	s := &Stream{parent: c, id: id, ctx: life, cancel: cancel, ready: make(chan error, 1), sendWindow: protocol.InitialStreamWindow, recvWindow: protocol.InitialStreamWindow}
 	c.streams[id] = s
+	c.touchLocked(s)
 	s.mu.Lock()
 	s.stop = context.AfterFunc(life, func() {
 		code := protocol.StreamCancelled
@@ -204,6 +220,9 @@ func (c *Conn) control(ctx context.Context, typ protocol.Type, id uint64, code s
 	return c.write(ctx, f)
 }
 func (c *Conn) startOpen(ctx context.Context, request protocol.OpenStream) (*Stream, error) {
+	if request.Upgrade != "" && !c.opts.WebSocket {
+		return nil, ErrProtocol
+	}
 	if c.opts.Accept != nil || c.opts.Diagnostic {
 		return nil, ErrProtocol
 	}
@@ -299,6 +318,10 @@ func (c *Conn) Run() (result error) {
 	defer func() { result = c.readError(result); c.Close(); c.workers.Wait() }()
 	c.workers.Add(1)
 	go func() { defer c.workers.Done(); c.controlLoop() }()
+	if c.opts.Streaming {
+		c.workers.Add(1)
+		go func() { defer c.workers.Done(); c.streamIdleLoop() }()
+	}
 	if c.opts.Heartbeat {
 		c.workers.Add(1)
 		go func() { defer c.workers.Done(); c.heartbeatLoop() }()
@@ -353,6 +376,9 @@ func (c *Conn) Run() (result error) {
 			request, err := protocol.DecodeOpenStream(f)
 			if err != nil {
 				return err
+			}
+			if request.Upgrade != "" && !c.opts.WebSocket {
+				return ErrProtocol
 			}
 			c.mu.Lock()
 			if c.closed {

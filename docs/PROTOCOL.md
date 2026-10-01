@@ -8,6 +8,7 @@ Tunnel registration and generation ownership are implemented in Phase 3.
 HTTP stream metadata, bounded multiplexing, and half-close/reset are implemented
 in Phase 4. Phase 5 adds byte-credit windows and bounded independent receive queues.
 Phase 6 adds negotiated heartbeat and cancellable automatic CLI reconnect.
+Phase 7 adds graceful draining; Phase 8 adds WebSocket upgrades and streaming idle lifetimes.
 
 ## Transport
 
@@ -123,8 +124,8 @@ contains the selected version, shared capabilities, and smaller payload limit:
 - Unknown optional capabilities are ignored unless both peers advertise them.
 - Capability names match `[a-z][a-z0-9_]{0,63}`. Lists contain at most 32 unique
   entries. Duplicate entries are invalid.
-- Initial defined names are `multiplexing`, `flow_control`, `heartbeat`, and
-  `graceful_shutdown`. Advertising a capability promises its behavior; defining
+- Defined names are `multiplexing`, `flow_control`, `heartbeat`,
+  `graceful_shutdown`, `streaming`, and `websocket`. Advertising a capability promises its behavior; defining
   these names in Phase 1 does not enable their later-phase implementations.
 - `version`, `capabilities`, and `max_payload_size` are required. An empty
   capabilities array is valid. `required_capabilities` may be absent in `HELLO`.
@@ -284,7 +285,7 @@ accepts OPEN_STREAM with JSON fields `method`, `target`, `host`, `headers`, and
 tokens, with at most 128 pairs and 32 KiB total metadata. Target is an origin-form
 path/query, at most 8192 bytes, never an absolute URL or upstream destination.
 Host is the registered canonical hostname. Content length is -1 (unknown) or
-0..16777216. CONNECT and upgrades are rejected; WebSocket support is Phase 8.
+0..16777216. CONNECT is rejected. Negotiated WebSocket upgrades are defined below.
 OPEN_STREAM payloads are capped at 64 KiB before allocation. Other stream control
 payloads are capped at 4096 bytes, DATA at 16 KiB (or the smaller negotiated limit).
 
@@ -427,3 +428,46 @@ other registration errors remain terminal. Operator relay selection is Phase 11.
 - stream IDs are unique per connection
 - no message may exceed configured frame limits
 - all I/O is cancelable
+
+## WebSocket and streaming (Phase 8)
+
+Optional capability `streaming` changes StreamTimeout from a whole-request
+lifetime to an application idle timeout (default 30s). Successful DATA writes,
+receipts and consumption refresh activity. Heartbeats and credit updates do not.
+Credential expiry, parent cancellation and shutdown deadlines always apply.
+Without this capability, the Phase 4 whole-request deadline remains in force.
+
+Optional capability `websocket` requires `streaming` for HTTP upgrades. Only
+upgrades to WebSocket version 13 are supported. OPEN_STREAM optionally includes
+`"upgrade":"websocket"`; this field is omitted for ordinary HTTP requests and is
+sent only when both capabilities were negotiated. Null, unknown, duplicate or
+non-WebSocket values are invalid. An upgrade requires GET, content_length 0,
+one canonical base64 Sec-WebSocket-Key decoding to 16 bytes and one
+Sec-WebSocket-Version value of 13. These application headers remain in headers;
+Connection and Upgrade are synthesized from the validated marker at the agent.
+The relay validates Connection token membership, Upgrade, method and body
+absence before opening a stream. Malformed upgrades return 400; unsupported
+protocols or peers lacking both capabilities return 501.
+
+Agent-bound DATA contains WebSocket frames immediately after OPEN_STREAM_OK;
+there is no request-body FIN before an upgrade. Relay-bound DATA initially holds
+the bounded HTTP response headers. A non-101 response remains ordinary HTTP. A
+101 response must match the request's key, WebSocket Upgrade/Connection values,
+and at most one offered subprotocol (offers are capped at 128 unique tokens). Bodies, transfer encoding, trailers and
+unsolicited extensions are rejected. Extension offers are removed, so compression
+is not negotiated. Both ends validate 101 before switching and preserve any
+bytes buffered alongside the HTTP headers.
+
+After a valid 101 the existing DATA/FIN/RESET and byte-credit windows transport
+frames transparently in both directions, including masking, binary/text payloads,
+fragmentation, ping/pong and close. The application endpoints own WebSocket frame
+semantics; Portway does not buffer or decode complete messages. Each pump uses
+at most a 16 KiB copy buffer. EOF sends directional FIN; both directions are
+joined, and errors/cancellation reset the stream and close the sockets. The
+ordinary HTTP body byte limits do not cap upgraded sessions; frame/credit,
+concurrency, idle, credential and shutdown limits still apply.
+
+SSE response headers and body chunks flush immediately. Ordinary streaming
+HTTP retains 16 MiB request and 64 MiB response limits; trailers remain unsupported.
+Chunked transfer coding is parsed/reconstructed at HTTP boundaries, not forwarded
+as application body bytes. Failed upgrades and streaming requests are not replayed.

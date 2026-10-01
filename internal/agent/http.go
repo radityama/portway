@@ -63,11 +63,11 @@ func (s *Session) serveHTTP(address string, shutdown context.Context, ready, dra
 }
 
 func (s *Session) streamOptions(diagnostic bool) mux.Options {
-	return mux.Options{MaxStreams: s.maxStreams, MaxFrame: s.MaxPayloadSize, StreamTimeout: s.streamTimeout, WriteTimeout: s.writeTimeout, IdleTimeout: s.idleTimeout, ExpiresAt: s.ExpiresAt, Heartbeat: s.heartbeat, Diagnostic: diagnostic, GracefulShutdown: s.graceful, ShutdownTimeout: s.shutdownTimeout}
+	return mux.Options{MaxStreams: s.maxStreams, MaxFrame: s.MaxPayloadSize, StreamTimeout: s.streamTimeout, WriteTimeout: s.writeTimeout, IdleTimeout: s.idleTimeout, ExpiresAt: s.ExpiresAt, Heartbeat: s.heartbeat, Diagnostic: diagnostic, GracefulShutdown: s.graceful, ShutdownTimeout: s.shutdownTimeout, Streaming: !diagnostic && s.streaming, WebSocket: !diagnostic && s.websocket}
 }
 
 func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, address string) {
-	if open.Host != s.registeredHost {
+	if open.Host != s.registeredHost || open.Upgrade != "" && !s.websocket {
 		stream.Reject(protocol.StreamInvalid)
 		return
 	}
@@ -76,13 +76,17 @@ func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, addr
 		stream.Reject(protocol.StreamUnavailable)
 		return
 	}
-	defer conn.Close()
-	stop := context.AfterFunc(stream.Context(), func() { conn.Close() })
+	rawConn := conn
+	defer rawConn.Close()
+	stop := context.AfterFunc(stream.Context(), func() { rawConn.Close() })
 	defer stop()
 	deadline, _ := stream.Context().Deadline()
 	if err := conn.SetDeadline(deadline); err != nil {
 		stream.Reject(protocol.StreamUnavailable)
 		return
+	}
+	if s.streaming {
+		conn = &httpwire.IdleConn{Conn: conn, Context: stream.Context(), Timeout: s.streamTimeout}
 	}
 	if err := stream.Accept(); err != nil {
 		return
@@ -102,6 +106,10 @@ func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, addr
 	request.Body = io.NopCloser(&httpwire.LimitedBody{Reader: stream, Remaining: protocol.MaxRequestBodySize})
 	if open.ContentLength == 0 {
 		request.Body = http.NoBody
+	}
+	if open.Upgrade == "websocket" {
+		s.forwardWebSocket(stream, conn, request)
+		return
 	}
 	uploaded := make(chan struct{})
 	go func() {
@@ -149,4 +157,47 @@ func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, addr
 	}
 	<-uploaded
 	_ = stream.WaitReceiveClose()
+}
+
+func (s *Session) forwardWebSocket(stream *mux.Stream, conn net.Conn, request *http.Request) {
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	if err := request.Write(conn); err != nil {
+		stream.Reset(protocol.StreamUnavailable)
+		return
+	}
+	response, reader, err := httpwire.ReadResponseUpgrade(bufio.NewReader(conn), request)
+	if err != nil {
+		stream.Reset(protocol.StreamUnavailable)
+		return
+	}
+	defer response.Body.Close()
+	if response.StatusCode != 101 {
+		if response.ContentLength > protocol.MaxResponseBodySize {
+			stream.Reset(protocol.StreamBodyLimit)
+			return
+		}
+		httpwire.StripHopHeaders(response.Header)
+		response.Close = true
+		response.Body = struct {
+			io.Reader
+			io.Closer
+		}{&httpwire.LimitedBody{Reader: response.Body, Remaining: protocol.MaxResponseBodySize}, response.Body}
+		if err := response.Write(stream); err != nil {
+			stream.Reset(protocol.StreamUnavailable)
+			return
+		}
+		if err := stream.CloseWrite(); err == nil {
+			_ = stream.WaitReceiveClose()
+		}
+		return
+	}
+	if !httpwire.ValidWebSocketResponse(response, request.Header) {
+		stream.Reset(protocol.StreamInvalid)
+		return
+	}
+	if err := httpwire.WriteWebSocketResponse(stream, response.Header); err != nil {
+		return
+	}
+	httpwire.Bridge(stream, conn, reader, stream)
 }

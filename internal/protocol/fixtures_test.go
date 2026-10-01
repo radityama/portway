@@ -32,7 +32,10 @@ type protocolFixtures struct {
 		WindowUpdateSize        int         `json:"window_update_size"`
 		ConnectionUpdate        wireFixture `json:"connection_update"`
 	} `json:"flow_control"`
-	Frames []wireFixture `json:"frames"`
+	Frames    []wireFixture `json:"frames"`
+	WebSocket struct {
+		Open wireFixture `json:"open"`
+	} `json:"websocket"`
 }
 
 func loadFixtures(t testing.TB) protocolFixtures {
@@ -68,6 +71,7 @@ func TestGoldenWireFixtures(t *testing.T) {
 	capabilities := map[string]Capability{
 		"MULTIPLEXING": CapabilityMultiplexing, "FLOW_CONTROL": CapabilityFlowControl,
 		"HEARTBEAT": CapabilityHeartbeat, "GRACEFUL_SHUTDOWN": CapabilityGracefulShutdown,
+		"STREAMING": CapabilityStreaming, "WEBSOCKET": CapabilityWebSocket,
 	}
 	if len(capabilities) != len(fixtures.Capabilities) {
 		t.Fatal("capability fixture mismatch")

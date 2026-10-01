@@ -15,3 +15,9 @@ lock connection before stream; release stream locks before parent operations.
 `Stream.writeMu` serializes its DATA/FIN, but no connection lock is held during
 network I/O or a credit wait. Control queue saturation and invalid peer credit
 fail the connection rather than growing storage.
+
+Phase 6 heartbeat uses this same reader and serialized writer. One owned worker
+tracks a single cryptographic probe and a monotonic deadline; matching PONG
+updates the read-only liveness snapshot. PONG replies use the bounded control
+queue and require no DATA credit. Diagnostic mode accepts only negotiated
+heartbeat messages, without enabling stream routing. All workers join on exit.

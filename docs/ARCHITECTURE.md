@@ -253,6 +253,14 @@ coalesces updates without an unbounded queue. Stream admission counts workers
 until cleanup finishes. HTTP requires both multiplexing and flow-control
 capabilities. No control-plane, database, or durable-state dependency is added.
 
+Phase 6 adds one owned heartbeat worker per negotiated registered connection.
+The existing frame reader validates probes and matching replies; the bounded
+control writer sends PONG even when DATA credit is exhausted. Missing PONG,
+credential expiry and cancellation close and join the session. Port invocations
+recover transport failures with cancellable exponential backoff and equal jitter,
+authenticate again, and persist a fresh generation before registration. Terminal
+security/protocol/registration errors stop; requests never migrate or replay.
+
 ## 9. Multiplexing
 
 One agent-to-relay connection should support many concurrent logical streams:

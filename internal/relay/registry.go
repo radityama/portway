@@ -24,9 +24,10 @@ type Session struct {
 
 type registryEntry struct {
 	Session
-	conn    net.Conn
-	ctx     context.Context
-	streams *mux.Conn
+	conn             net.Conn
+	ctx              context.Context
+	streams          *mux.Conn
+	registrationDone chan struct{}
 }
 
 func assignedHostname(tunnelID, base string) string {
@@ -64,6 +65,9 @@ func (s *Server) register(ctx context.Context, identity auth.Identity, connectio
 	}
 	host := assignedHostname(request.TunnelID, s.PublicBaseDomain)
 	owner := &registryEntry{Session: Session{TunnelID: request.TunnelID, ConnectionID: connectionID, Generation: request.Generation, PublicHostname: host, ExpiresAt: identity.ExpiresAt, LastSeen: time.Now()}, conn: conn, ctx: ctx}
+	if request.Protocol == "http" {
+		owner.registrationDone = make(chan struct{})
+	}
 	s.mu.Lock()
 	previous := s.sessions[request.TunnelID]
 	if previous != nil && previous.Generation >= request.Generation {

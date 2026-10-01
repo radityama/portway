@@ -15,6 +15,12 @@ export const MAX_RESPONSE_BODY_SIZE = 64 * 1024 * 1024;
 export const INITIAL_STREAM_WINDOW = 64 * 1024;
 export const INITIAL_CONNECTION_WINDOW = 1024 * 1024;
 export const WINDOW_UPDATE_SIZE = 4 as const;
+export const HEARTBEAT_INTERVAL_MS = 15000 as const;
+export const HEARTBEAT_TIMEOUT_MS = 45000 as const;
+export interface Heartbeat {
+  nonce: string;
+  timestamp: string;
+}
 export interface OpenStream {
   method: string;
   target: string;

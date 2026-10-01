@@ -152,10 +152,35 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id, known := s.hostnames[host]
 	owner := s.sessions[id]
 	var session *mux.Conn
+	var registrationDone <-chan struct{}
 	if owner != nil && owner.conn != nil && owner.ctx.Err() == nil && time.Now().Before(owner.ExpiresAt) {
 		session = owner.streams
+		if session == nil {
+			registrationDone = owner.registrationDone
+		}
 	}
 	s.mu.RUnlock()
+	if registrationDone != nil {
+		// The peer can receive REGISTER_OK before its writer returns and the
+		// relay publishes routing. Wait outside the registry lock, within the
+		// existing write deadline, then recheck the exact current owner.
+		timer := time.NewTimer(s.WriteTimeout)
+		defer timer.Stop()
+		select {
+		case <-registrationDone:
+			s.mu.RLock()
+			owner = s.sessions[id]
+			if owner != nil && owner.conn != nil && owner.ctx.Err() == nil && time.Now().Before(owner.ExpiresAt) {
+				session = owner.streams
+			}
+			s.mu.RUnlock()
+		case <-r.Context().Done():
+			w.Header().Set("Connection", "close")
+			httpFailure(w, "tunnel unavailable", 503)
+			return
+		case <-timer.C:
+		}
+	}
 	if !known {
 		httpFailure(w, "tunnel not found", 404)
 		return
@@ -258,11 +283,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		default:
 		}
+		// Cleanup interrupts unread input with a deadline. That can cancel the
+		// HTTP connection's context permanently; do not reuse it for a new request.
+		w.Header().Set("Connection", "close")
 		httpFailure(w, "upstream response unavailable", status)
 		return
 	}
 	responseBody = response.Body
 	if response.ContentLength > protocol.MaxResponseBodySize {
+		w.Header().Set("Connection", "close")
 		httpFailure(w, "upstream response exceeds limit", 502)
 		return
 	}

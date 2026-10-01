@@ -249,6 +249,14 @@ Implement:
 
 Test by killing the network connection while traffic is active.
 
+Phase 6 implements strict negotiated PING/PONG, one bounded probe per endpoint,
+credential-bounded liveness cleanup, and cancellable port-invocation retries.
+Equal jitter and capped exponential backoff avoid tight loops; only transport
+failure and missing PONG retry. Each registration uses a new persisted generation.
+Tests interrupt an active mutation, verify cleanup without replay, then serve
+fresh traffic at the stable URL. See [PHASE_6.md](./PHASE_6.md) for verification
+and the remaining relay-selection/credential-renewal boundary.
+
 ## 11. Phase 7 — Graceful Shutdown
 
 Implement:

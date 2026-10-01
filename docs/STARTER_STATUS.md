@@ -50,7 +50,15 @@ Cancellation/reset return connection credit and wake waiting writers; stream
 workers retain admission until cleanup completes. HTTP requires negotiation of
 both stream capabilities. See [PHASE_5.md](./PHASE_5.md).
 
-The next phase is Phase 6: heartbeat and automatic reconnect with backoff/jitter.
+## Phase 6
+
+Negotiated PING/PONG, bounded liveness workers and automatic port-invocation
+reconnect with capped exponential backoff/equal jitter are implemented. Fresh
+sessions authenticate and reserve higher generations. Transport loss cancels
+active HTTP work without replay; terminal auth/TLS/protocol/registration errors
+stop. See [PHASE_6.md](./PHASE_6.md).
+
+The next phase is Phase 7: graceful shutdown and draining.
 Durable credential issuance, database migrations, and dashboard features remain
 later work.
 
@@ -64,6 +72,7 @@ later work.
 - tunnel registration, hostname resolution, generation ownership, and local counters
 - public HTTPS routing, bounded HTTP streams, and fixed loopback forwarding
 - stream/connection credit windows, bounded receive pages, and backpressure
+- registered-session heartbeat and cancellable CLI reconnect with fresh generations
 - control-plane HTTP API scaffold
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification

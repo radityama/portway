@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–5 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. The API and dashboard are skeletons.
+Phases 0–6 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. The API and dashboard are skeletons.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -73,7 +73,7 @@ the assigned hostname and a decimal-string generation. A numeric port invocation
 starts HTTP forwarding and emits `tunnel_connected`, `public_url`, and `ready`.
 Use the printed HTTPS URL to reach the local service. Diagnostic `register` does
 not enable forwarding; `register --once` closes its route immediately after
-the ACK. Held connections end on Ctrl+C, replacement, idle timeout or expiry.
+the ACK. Held diagnostic connections end on Ctrl+C, replacement, heartbeat failure, idle timeout or expiry. Port invocations reconnect after transient transport failure with jittered delays from a 1s base up to 30s, resetting after 60s connected. JSON emits `tunnel_disconnected` and `reconnect_scheduled`, then repeats readiness after recovery. Interrupted requests fail without replay; authentication, TLS verification, protocol and registration failures stop the CLI.
 `connect` without registration is diagnostic and ends on the registration timeout.
 
 For the default development tunnel, with a service listening on port 3000 and
@@ -96,9 +96,9 @@ must match `PORTWAY_TUNNEL_ID`. The relay assigns stable hostnames under
 Generation counters persist per tunnel in private `PORTWAY_STATE_DIR` (default
 `.tmp/agent-state`). Failed attempts consume numbers. Keep this directory across
 starts; two machines sharing a tunnel need coordinated generations until later
-control-plane/reconnect work. An explicit `PORTWAY_GENERATION` recovery override
+control-plane work. Run one agent per tunnel. An explicit `PORTWAY_GENERATION` recovery override
 must exceed the relay watermark and the local counter, and is persisted locally.
-Remove the override after recovery so normal increments resume.
+The override applies to the first reservation in each CLI run; automatic reconnect increments from it. Remove it before the next manual start.
 
 `make dev` loads `.env`; standalone Go commands read shell environment. With a
 custom relay port, set the destination explicitly, for example
@@ -127,7 +127,7 @@ connection. A stalled consumer no longer blocks the shared frame reader; many
 stalled streams can still fill the shared budget. Update agent and relay together:
 HTTP requires negotiated `multiplexing` and `flow_control`. See
 [Phase 4](./docs/PHASE_4.md) for HTTP settings and [Phase 5](./docs/PHASE_5.md)
-for flow-control bounds and upgrade behavior.
+for flow-control bounds and upgrade behavior. Negotiated heartbeat probes every 15s and requires a matching reply within 45s; see [Phase 6](./docs/PHASE_6.md) for recovery policy and terminal errors.
 
 ## Quality gates
 

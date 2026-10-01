@@ -7,6 +7,7 @@ Session handshakes and transport ownership are implemented in Phase 2.
 Tunnel registration and generation ownership are implemented in Phase 3.
 HTTP stream metadata, bounded multiplexing, and half-close/reset are implemented
 in Phase 4. Phase 5 adds byte-credit windows and bounded independent receive queues.
+Phase 6 adds negotiated heartbeat and cancellable automatic CLI reconnect.
 
 ## Transport
 
@@ -358,6 +359,34 @@ Many stalled streams may exhaust the connection budget and apply shared
 backpressure; TCP packet loss still affects the shared transport. Independent
 credit windows remove the application-reader coupling within that budget without
 promising transport-level isolation or strict scheduling fairness.
+
+## Heartbeat and reconnect (Phase 6)
+
+Registered sessions negotiate `heartbeat`. PING and PONG use stream ID 0 and
+strict JSON with exactly `nonce` (16 lowercase hexadecimal characters) and
+`timestamp` (a nonzero RFC3339Nano UTC string). Payloads are capped at 4096 bytes
+before allocation. PONG echoes the entire validated PING payload unchanged.
+Each side sends a cryptographically random probe after 15 seconds, allows one
+outstanding probe, and closes the connection if its matching PONG does not arrive
+within 45 seconds. Application traffic does not satisfy a probe. An unsolicited,
+duplicate, or mismatched PONG is a protocol error. Wall clocks are never compared
+for liveness; deadlines use local monotonic time. Replies use the bounded control
+queue and probes use the serialized writer without consuming DATA credit.
+
+Heartbeat starts after REGISTER_OK, including held diagnostic registrations.
+Unregistered diagnostics remain subject to the registration timeout. Older peers
+without heartbeat retain idle deadlines; heartbeat frames are rejected unless
+negotiated. Credential expiry and cancellation always bound the session.
+
+Port invocations retry transport failures with equal jitter in [base/2, base],
+where base increases 1s, 2s, 4s, 8s, 16s, 30s and remains capped at 30s. A session
+healthy for at least 60 seconds resets the backoff. Retries reauthenticate, reserve
+a fresh persisted generation and register before emitting readiness. Explicit
+recovery generation applies once; later reservations increment it. Authentication,
+certificate verification, invalid protocol/configuration/state, and registration
+errors are terminal. Interrupted requests are closed and never replayed. Relay
+selection and credential renewal remain later phases. Diagnostic commands retain
+their one-session behavior.
 
 ## Invariants
 

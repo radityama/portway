@@ -10,3 +10,9 @@ bounded streams to one fixed loopback port, and joins local forwarding workers
 on cancellation or connection closure. Phase 5 requires flow-control negotiation
 and consumes independent bounded queues with returned byte credit. See
 [Phase 5](../../docs/PHASE_5.md).
+
+Phase 6 handles negotiated heartbeat in registered diagnostic and HTTP sessions.
+The CLI owns the reconnect loop; Backoff supplies capped exponential delays with
+equal jitter and WaitReconnect observes cancellation. Security/protocol/state
+errors are terminal. Every fresh registration reserves a higher generation;
+active requests are closed and never replayed. See [Phase 6](../../docs/PHASE_6.md).

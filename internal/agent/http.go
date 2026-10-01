@@ -36,7 +36,7 @@ func (s *Session) ServeHTTPReady(address string, ready func()) error {
 		return ErrSessionInUse
 	}
 	defer s.Close()
-	options := mux.Options{MaxStreams: s.maxStreams, MaxFrame: s.MaxPayloadSize, StreamTimeout: s.streamTimeout, WriteTimeout: s.writeTimeout, IdleTimeout: s.idleTimeout, ExpiresAt: s.ExpiresAt}
+	options := s.streamOptions(false)
 	options.Accept = func(stream *mux.Stream, request protocol.OpenStream) { s.forwardHTTP(stream, request, address) }
 	session, err := mux.New(s.ctx, s.conn, s.reader, options)
 	if err != nil {
@@ -46,6 +46,10 @@ func (s *Session) ServeHTTPReady(address string, ready func()) error {
 		ready()
 	}
 	return contextError(s.ctx, session.Run())
+}
+
+func (s *Session) streamOptions(diagnostic bool) mux.Options {
+	return mux.Options{MaxStreams: s.maxStreams, MaxFrame: s.MaxPayloadSize, StreamTimeout: s.streamTimeout, WriteTimeout: s.writeTimeout, IdleTimeout: s.idleTimeout, ExpiresAt: s.ExpiresAt, Heartbeat: s.heartbeat, Diagnostic: diagnostic}
 }
 
 func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, address string) {

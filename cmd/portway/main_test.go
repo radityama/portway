@@ -22,6 +22,11 @@ import (
 )
 
 func cliFixture(t *testing.T) (config.Lookup, string) {
+	env, token, _ := cliRelayFixture(t)
+	return env, token
+}
+
+func cliRelayFixture(t *testing.T, configure ...func(*relay.Server)) (config.Lookup, string, *relay.Server) {
 	t.Helper()
 	dir := t.TempDir()
 	if err := devsetup.Ensure(dir, false); err != nil {
@@ -36,6 +41,9 @@ func cliFixture(t *testing.T) (config.Lookup, string) {
 	server.Authenticator, err = auth.LoadVerifier(filepath.Join(dir, "relay-credentials.json"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, apply := range configure {
+		apply(server)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -77,7 +85,7 @@ func cliFixture(t *testing.T) (config.Lookup, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return lookup, token
+	return lookup, token, server
 }
 
 type readyWriter struct {

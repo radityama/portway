@@ -134,6 +134,11 @@ hostname. Unknown hostnames return 404; known offline or diagnostic-only owners
 return 503. HTTP registration requires negotiated multiplexing and a public
 listener, and its ACK includes the assigned HTTPS URL.
 
+Phase 6 also closes the ACK publication race: a public request arriving while
+an HTTP registration is pending waits outside the registry lock for at most the
+write timeout, observes cancellation, then rechecks the current owner. No stream
+opens before ACK success; a failed ACK leaves forwarding unavailable.
+
 Hostnames use `p-` plus the first 128 bits of SHA-256(tunnel ID), under operator
 configured PUBLIC_BASE_DOMAIN. They are stable per tunnel/base domain. Peers may
 not choose a hostname; collisions fail closed. Custom domain policy is Phase 12.
@@ -315,6 +320,10 @@ relay may drain remaining request input within its body cap for at most one
 second, bounded by the stream deadline, to avoid truncating the reply with a TCP
 reset. Failed/cancelled requests interrupt body reads immediately.
 
+Phase 6 closes the public HTTP connection on upstream response failure, before
+interrupting unread input. A forced read deadline can cancel the connection's
+HTTP context; that connection must not carry a subsequent request after recovery.
+
 ## 13. Backpressure
 
 Backpressure must propagate:
@@ -428,6 +437,13 @@ PONG(nonce, timestamp)
 
 A missed heartbeat should move the session into a degraded/disconnected state rather than immediately destroying every local resource without cleanup.
 
+Phase 6 implements negotiated PING/PONG on registered HTTP and diagnostic
+sessions. Each endpoint tracks one outstanding probe and the last matching PONG.
+It probes every 15 seconds and allows 45 seconds for a reply; traffic cannot
+extend that deadline. Timeout closes the socket, cancels streams/local TCP work,
+joins workers and removes only that owner's route. Strict nonce/timestamp JSON,
+compatibility and queue bounds are specified in [PROTOCOL.md](./PROTOCOL.md).
+
 ## 21. Reconnect
 
 Backoff:
@@ -460,6 +476,15 @@ healthy
 
 Existing streams should normally fail rather than being replayed automatically.
 
+Phase 6 port invocations reconnect to the configured relay with equal jitter
+between half and all of each exponential delay. The maximum base is 30s; 60s of
+healthy forwarding resets it. Cancellation interrupts backoff and network I/O.
+Every fresh registration reserves a higher local generation; the explicit
+recovery override is consumed once. Transport failure and heartbeat timeout are
+retryable, while authentication, TLS verification, protocol and registration
+errors stop. Diagnostic commands retain their single-session behavior. New
+readiness events describe the recovered session; failed requests are not replayed.
+
 ## 22. Stale Session Protection
 
 Use generation numbers:
@@ -484,8 +509,10 @@ Failed ACK writes remove active routing but retain the accepted generation.
 
 The CLI reserves generations before sending REGISTER, with private per-tunnel
 files and an exclusive lock. Concurrent starts fail without a retry loop. Failed
-attempts may leave gaps. Multi-relay coordination and automatic reconnect remain
-later phases; local counter loss needs an operator-selected higher generation.
+attempts may leave gaps. Phase 6 automatic reconnect reserves a fresh generation
+for each new registration. Multi-relay coordination remains later work; local
+counter loss needs an operator-selected higher generation. Run one agent per
+tunnel: machines sharing its identity must coordinate generation ownership.
 
 ## 23. Relay Failure
 

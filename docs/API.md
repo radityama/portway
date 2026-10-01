@@ -312,7 +312,7 @@ Suggested:
 
 Keep exit codes stable for automation.
 
-### Current CLI connection, registration, and forwarding milestones (Phases 2–5)
+### Current CLI connection, registration, and forwarding milestones (Phases 2–6)
 
 `portway connect --once` verifies one authenticated relay handshake and exits.
 `portway connect` holds an unregistered diagnostic connection until interruption,
@@ -349,6 +349,20 @@ Existing implemented exit codes are preserved: `0` for success/clean shutdown,
 `1` for connection/authentication/registration/forwarding/local-service failures, and `2` for invalid
 command usage. The broader suggested codes above remain a future CLI change.
 This milestone changes the CLI interface only; REST/OpenAPI semantics are unchanged.
+
+Phase 6 port invocations reconnect after transient transport/heartbeat failure.
+`tunnel_disconnected` includes `connection_id`, `relay`, and a stable `reason`
+(`transport_closed`, `heartbeat_timeout`, or `transport_timeout`).
+`reconnect_scheduled` includes `relay`, `attempt` (consecutive retry number),
+`delay_ms` (positive integer), and the same reason. A failed initial dial emits
+only the scheduling event. Each new successful session repeats authentication,
+registration and forwarding readiness events with a new connection ID and
+higher generation; the assigned URL stays stable. Backoff has equal jitter,
+a 1s initial base and 30s maximum base, resetting after 60s connected.
+Ctrl+C cancels connection work or backoff and emits `shutdown_complete` with
+exit 0. Terminal failures emit `error` and exit 1 without retries. Diagnostics
+remain one-session commands. No request is replayed and no secret/raw network
+error is included in reconnect events.
 
 ## 13. Pagination
 

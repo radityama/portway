@@ -33,7 +33,13 @@ type Event struct {
 	PublicHostname string `json:"public_hostname,omitempty"`
 	PublicURL      string `json:"public_url,omitempty"`
 	URL            string `json:"url,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	Attempt        uint32 `json:"attempt,omitempty"`
+	DelayMS        int64  `json:"delay_ms,omitempty"`
 }
+
+var errCredentialFile = errors.New("cannot read a valid private credential file; run make setup")
+var errGenerationState = errors.New("cannot reserve tunnel generation; check state directory or concurrent starts")
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -86,10 +92,6 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	if err != nil {
 		return fail("invalid relay connection configuration", 1)
 	}
-	token, err := auth.ReadTokenFile(cfg.TokenFile)
-	if err != nil {
-		return fail("cannot read a valid private credential file; run make setup", 1)
-	}
 	tlsConfig, err := transport.ClientConfig(cfg.CAFile, cfg.ServerName)
 	if err != nil {
 		return fail("cannot load relay certificate trust; run make setup", 1)
@@ -102,7 +104,6 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 		}
 		return fail(fmt.Sprintf("localhost:%d is not reachable", port), 1)
 	}
-	emit(Event{Event: "tunnel_connecting", Relay: cfg.Address, Port: port})
 	client := agent.NewClient(&transport.TLSDialer{Config: tlsConfig, Timeout: cfg.ConnectTimeout})
 	client.HandshakeTimeout = cfg.HandshakeTimeout
 	client.IdleTimeout = cfg.IdleTimeout
@@ -110,87 +111,123 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	client.RegistrationTimeout = cfg.RegistrationTimeout
 	client.MaxStreams = cfg.MaxStreams
 	client.StreamTimeout = cfg.StreamTimeout
-	session, err := client.Connect(ctx, cfg.Address, token)
-	token = ""
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			emit(Event{Event: "shutdown_complete"})
-			return 0
-		}
-		var rejected *agent.AuthenticationError
-		if errors.As(err, &rejected) {
-			return fail("relay authentication failed: "+rejected.Code, 1)
-		}
-		return fail("relay connection failed; check address, TLS trust, and relay availability", 1)
-	}
-	defer session.Close()
 	localURL := ""
 	if port != 0 {
 		localURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	}
-	emit(Event{Event: "relay_authenticated", ConnectionID: session.ConnectionID, Relay: cfg.Address, LocalURL: localURL, Port: port})
-	publicURL := ""
-	if register {
-		generation, err := agent.ReserveGeneration(ctx, cfg.StateDir, cfg.TunnelID, cfg.Generation)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				emit(Event{Event: "shutdown_complete"})
-				return 0
+	explicitGeneration := cfg.Generation
+	var backoff agent.Backoff
+	for {
+		var connectedAt time.Time
+		connectionID := ""
+		attemptErr := func() (result error) {
+			// Reload the private file for each new handshake; never retain credentials
+			// in reconnect state or print an underlying read/transport error.
+			token, err := auth.ReadTokenFile(cfg.TokenFile)
+			if err != nil {
+				return errCredentialFile
 			}
-			return fail("cannot reserve tunnel generation; check state directory or concurrent starts", 1)
-		}
-		mode := ""
-		if port != 0 {
-			mode = "http"
-		}
-		ack, err := session.Register(ctx, protocol.Register{TunnelID: cfg.TunnelID, Generation: generation, Protocol: mode})
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				emit(Event{Event: "shutdown_complete"})
-				return 0
+			emit(Event{Event: "tunnel_connecting", Relay: cfg.Address, Port: port})
+			session, err := client.Connect(ctx, cfg.Address, token)
+			token = ""
+			if err != nil {
+				return err
 			}
-			var rejected *agent.RegistrationError
-			if errors.As(err, &rejected) {
-				return fail("tunnel registration failed: "+rejected.Code, 1)
+			defer session.Close()
+			defer func() {
+				if !time.Now().Before(session.ExpiresAt) && ctx.Err() == nil {
+					result = &agent.AuthenticationError{Code: protocol.AuthExpired}
+				}
+			}()
+			connectionID = session.ConnectionID
+			emit(Event{Event: "relay_authenticated", ConnectionID: session.ConnectionID, Relay: cfg.Address, LocalURL: localURL, Port: port})
+			publicURL := ""
+			if register {
+				generation, err := agent.ReserveGeneration(ctx, cfg.StateDir, cfg.TunnelID, explicitGeneration)
+				if err != nil {
+					return errGenerationState
+				}
+				explicitGeneration = 0
+				mode := ""
+				if port != 0 {
+					mode = "http"
+				}
+				ack, err := session.Register(ctx, protocol.Register{TunnelID: cfg.TunnelID, Generation: generation, Protocol: mode})
+				if err != nil {
+					return err
+				}
+				emit(Event{Event: "tunnel_registered", TunnelID: ack.TunnelID, ConnectionID: ack.ConnectionID, Generation: ack.Generation.String(), PublicHostname: ack.PublicHostname, Relay: cfg.Address, LocalURL: localURL, Port: port})
+				publicURL = ack.PublicURL
+				if jsonMode != "1" {
+					fmt.Fprintf(stdout, "✓ Tunnel registered\nHostname %s\n", ack.PublicHostname)
+				}
 			}
-			return fail("tunnel registration failed; check relay availability and configuration", 1)
-		}
-		emit(Event{Event: "tunnel_registered", TunnelID: ack.TunnelID, ConnectionID: ack.ConnectionID, Generation: ack.Generation.String(), PublicHostname: ack.PublicHostname, Relay: cfg.Address, LocalURL: localURL, Port: port})
-		publicURL = ack.PublicURL
-		if jsonMode != "1" {
-			fmt.Fprintf(stdout, "✓ Tunnel registered\nHostname %s\n", ack.PublicHostname)
-		}
-	}
-	if jsonMode != "1" {
-		fmt.Fprintf(stdout, "✓ Relay authenticated: %s\n", cfg.Address)
-		if localURL != "" {
-			fmt.Fprintf(stdout, "Local %s\n", localURL)
-		}
-		if !once {
-			fmt.Fprintln(stdout, "Press Ctrl+C to disconnect.")
-		}
-	}
-	if once {
-		return 0
-	}
-	var waitErr error
-	if port != 0 {
-		waitErr = session.ServeHTTPReady(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), func() {
-			emit(Event{Event: "tunnel_connected", ConnectionID: session.ConnectionID, Relay: cfg.Address})
-			emit(Event{Event: "public_url", URL: publicURL})
-			emit(Event{Event: "ready", PublicURL: publicURL, LocalURL: localURL, Port: port})
 			if jsonMode != "1" {
-				fmt.Fprintf(stdout, "Public %s\nReady.\n", publicURL)
+				fmt.Fprintf(stdout, "✓ Relay authenticated: %s\n", cfg.Address)
+				if localURL != "" {
+					fmt.Fprintf(stdout, "Local %s\n", localURL)
+				}
+				if !once {
+					fmt.Fprintln(stdout, "Press Ctrl+C to disconnect.")
+				}
 			}
-		})
-	} else {
-		waitErr = session.Wait()
+			if once {
+				return nil
+			}
+			var errWait error
+			if port != 0 {
+				errWait = session.ServeHTTPReady(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), func() {
+					connectedAt = time.Now()
+					emit(Event{Event: "tunnel_connected", ConnectionID: session.ConnectionID, Relay: cfg.Address})
+					emit(Event{Event: "public_url", URL: publicURL})
+					emit(Event{Event: "ready", PublicURL: publicURL, LocalURL: localURL, Port: port})
+					if jsonMode != "1" {
+						fmt.Fprintf(stdout, "Public %s\nReady.\n", publicURL)
+					}
+				})
+			} else {
+				errWait = session.Wait()
+			}
+			return errWait
+		}()
+		if ctx.Err() != nil || attemptErr == nil {
+			if !once {
+				emit(Event{Event: "shutdown_complete"})
+			}
+			return 0
+		}
+		if port == 0 || !agent.Retryable(attemptErr) {
+			var authentication *agent.AuthenticationError
+			var registration *agent.RegistrationError
+			if errors.As(attemptErr, &authentication) {
+				return fail("relay authentication failed: "+authentication.Code, 1)
+			}
+			if errors.As(attemptErr, &registration) {
+				return fail("tunnel registration failed: "+registration.Code, 1)
+			}
+			if errors.Is(attemptErr, errCredentialFile) || errors.Is(attemptErr, errGenerationState) {
+				return fail(attemptErr.Error(), 1)
+			}
+			return fail("relay connection failed; check address, TLS trust, and relay availability", 1)
+		}
+		reason := agent.DisconnectReason(attemptErr)
+		if connectionID != "" {
+			emit(Event{Event: "tunnel_disconnected", ConnectionID: connectionID, Relay: cfg.Address, Reason: reason})
+		}
+		healthyFor := time.Duration(0)
+		if !connectedAt.IsZero() {
+			healthyFor = time.Since(connectedAt)
+		}
+		attempt, delay := backoff.Next(healthyFor)
+		emit(Event{Event: "reconnect_scheduled", Relay: cfg.Address, Reason: reason, Attempt: attempt, DelayMS: delay.Milliseconds()})
+		if jsonMode != "1" {
+			fmt.Fprintf(stderr, "Relay disconnected. Reconnecting in %s.\n", delay.Round(time.Millisecond))
+		}
+		if agent.WaitReconnect(ctx, delay) != nil {
+			emit(Event{Event: "shutdown_complete"})
+			return 0
+		}
 	}
-	if waitErr != nil && !errors.Is(waitErr, context.Canceled) {
-		return fail("relay connection closed", 1)
-	}
-	emit(Event{Event: "shutdown_complete"})
-	return 0
 }
 
 func localReachable(ctx context.Context, port int) bool {

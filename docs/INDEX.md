@@ -22,6 +22,7 @@
 - [Phase 3](./PHASE_3.md) — tunnel registration, hostname resolution, generation ownership, and replacement tests
 - [Phase 4](./PHASE_4.md) — public HTTPS, HTTP stream forwarding, limits, and cancellation tests
 - [Phase 5](./PHASE_5.md) — stream/connection credit, bounded buffering, and slow-consumer isolation
+- [Phase 6](./PHASE_6.md) — heartbeat liveness, reconnect backoff, fresh generations, and no-replay recovery
 
 ## Contract hierarchy
 

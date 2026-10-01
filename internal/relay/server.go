@@ -167,7 +167,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	if err != nil || remote.MaxPayloadSize < protocol.MaxHandshakePayloadSize {
 		return protocol.ErrInvalidHandshake
 	}
-	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl}, MaxPayloadSize: s.MaxFrame})
+	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat}, MaxPayloadSize: s.MaxFrame})
 	if err != nil {
 		return err
 	}
@@ -247,8 +247,10 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 		return protocol.ErrInvalidHandshake
 	}
 	var streams *mux.Conn
-	if request.Protocol == "http" {
-		streams, err = mux.New(ctx, conn, reader, mux.Options{MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt})
+	heartbeat := slices.Contains(ack.Capabilities, protocol.CapabilityHeartbeat)
+	httpMode := request.Protocol == "http"
+	if httpMode || heartbeat {
+		streams, err = mux.New(ctx, conn, reader, mux.Options{MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt, Diagnostic: !httpMode, Heartbeat: heartbeat})
 		if err != nil {
 			return err
 		}
@@ -260,8 +262,13 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 		return errors.New(code)
 	}
 	defer s.unregister(owner)
+	var finishRegistration func()
+	if httpMode {
+		finishRegistration = sync.OnceFunc(func() { close(owner.registrationDone) })
+		defer finishRegistration()
+	}
 	publicURL := ""
-	if streams != nil {
+	if httpMode {
 		publicURL = "https://" + owner.PublicHostname
 		if s.PublicPort != 443 {
 			publicURL += ":" + strconv.Itoa(s.PublicPort)
@@ -276,11 +283,14 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	}
 	s.Logger.Info("relay_registered", "tunnel_id", owner.TunnelID, "connection_id", owner.ConnectionID, "generation", owner.Generation.String(), "hostname", owner.PublicHostname)
 	if streams != nil {
-		s.mu.Lock()
-		if s.sessions[owner.TunnelID] == owner {
-			owner.streams = streams
+		if httpMode {
+			s.mu.Lock()
+			if s.sessions[owner.TunnelID] == owner {
+				owner.streams = streams
+			}
+			s.mu.Unlock()
+			finishRegistration()
 		}
-		s.mu.Unlock()
 		return streams.Run()
 	}
 	readDeadline := earlier(time.Now().Add(s.ReadIdleTimeout), identity.ExpiresAt)
@@ -323,6 +333,9 @@ func earlier(a, b time.Time) time.Time {
 }
 
 func closeReason(err error) string {
+	if errors.Is(err, mux.ErrHeartbeatTimeout) {
+		return "heartbeat_timeout"
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "cancelled"
 	}

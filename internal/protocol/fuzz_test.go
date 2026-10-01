@@ -68,7 +68,7 @@ func FuzzFrameRoundTrip(f *testing.F) {
 
 func FuzzHandshake(f *testing.F) {
 	for _, fixture := range loadFixtures(f).Frames {
-		if fixture.Type >= 1 && fixture.Type <= 8 {
+		if fixture.Type >= 1 && fixture.Type <= 10 {
 			payload, err := hex.DecodeString(fixture.PayloadHex)
 			if err != nil {
 				f.Fatal(err)
@@ -82,6 +82,19 @@ func FuzzHandshake(f *testing.F) {
 	f.Add([]byte(`{"version":1,"version":2,"capabilities":null,"max_payload_size":0}`))
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, payload []byte) {
+		for _, typ := range []Type{TypePing, TypePong} {
+			frame := Frame{Version: Version, Type: typ, Payload: payload}
+			if value, err := DecodeHeartbeat(frame); err == nil {
+				encoded, err := EncodeHeartbeat(typ, value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				decoded, err := DecodeHeartbeat(encoded)
+				if err != nil || decoded != value {
+					t.Fatal("heartbeat canonical round trip failed")
+				}
+			}
+		}
 		frame := Frame{Version: Version, Type: TypeHello, Payload: payload}
 		if hello, err := DecodeHello(frame); err == nil {
 			encoded, err := EncodeHello(hello)

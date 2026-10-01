@@ -2,7 +2,9 @@ package relay
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -116,5 +118,47 @@ func TestRegistryExpiryConflictAndHostValidation(t *testing.T) {
 	s.hostnames[assignedHostname(identity.TunnelID, s.PublicBaseDomain)] = "tnl_collision"
 	if _, code := s.register(context.Background(), identity, "collision", request, conn); code != protocol.RegisterConflict {
 		t.Fatal("hostname collision overwritten")
+	}
+}
+
+func TestHTTPPendingRegistrationWaitIsBoundedAndCancelable(t *testing.T) {
+	for _, mode := range []string{"timeout", "cancel", "failed_ack"} {
+		t.Run(mode, func(t *testing.T) {
+			server := NewServer(nil)
+			server.PublicPort = 8443
+			server.WriteTimeout = 20 * time.Millisecond
+			identity := auth.Identity{TunnelID: "tnl_fixture", ExpiresAt: time.Now().Add(time.Minute)}
+			conn, peer := net.Pipe()
+			defer conn.Close()
+			defer peer.Close()
+			owner, code := server.register(context.Background(), identity, "connection", protocol.Register{TunnelID: identity.TunnelID, Generation: 1, Protocol: "http"}, conn)
+			if code != "" {
+				t.Fatal(code)
+			}
+			request := httptest.NewRequest("GET", "/", nil)
+			request.Host = owner.PublicHostname + ":8443"
+			request.TLS = &tls.ConnectionState{ServerName: owner.PublicHostname}
+			ctx, cancel := context.WithCancel(request.Context())
+			defer cancel()
+			request = request.WithContext(ctx)
+			if mode == "failed_ack" {
+				close(owner.registrationDone)
+				server.unregister(owner)
+			}
+			response := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() { server.ServeHTTP(response, request); close(done) }()
+			if mode == "cancel" {
+				cancel()
+			}
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("pending ACK retained public request")
+			}
+			if mode != "cancel" && response.Code != 503 {
+				t.Fatal("incomplete/failed ACK enabled forwarding")
+			}
+		})
 	}
 }

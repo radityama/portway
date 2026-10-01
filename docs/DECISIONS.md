@@ -58,6 +58,25 @@ connection credit; already-sent bytes are never refunded by the sender. Admissio
 counts acceptance workers until cleanup completes. Shared budget saturation and
 TCP/socket backpressure still apply. No dependency or durable model is added.
 
+## ADR-011: Negotiated Liveness and Explicit CLI Recovery
+
+Registered sessions negotiate `heartbeat` with strict JSON PING/PONG, a random
+64-bit nonce and an echoed UTC timestamp. Local monotonic deadlines, one
+outstanding probe and one owned worker per connection bound liveness work.
+The existing reader and bounded control writer handle replies independent of
+DATA credit; old peers keep idle deadlines without heartbeat frames.
+
+Port invocations own a visible reconnect loop with equal jitter, 1s–30s base
+delays and a reset only after 60s healthy. Transport failures retry; security,
+protocol, local-state and registration failures stop. Each new registration
+reserves a higher persisted generation; no HTTP request migrates or replays.
+Credential expiry remains terminal. Multi-relay selection, credential renewal
+and graceful draining retain their later-phase boundaries.
+
+A bounded registration-completion barrier lets a request arriving immediately
+after the agent receives its ACK wait for relay routing publication. It holds
+no registry lock during I/O and never forwards before ACK success.
+
 ## ADR-001: Go for Agent and Relay
 
 Go is the baseline implementation language for the data plane because it provides a strong networking standard library, straightforward concurrency, and easy cross-platform distribution.

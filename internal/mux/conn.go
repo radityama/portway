@@ -21,19 +21,24 @@ type RemoteError struct{ Code string }
 func (e *RemoteError) Error() string { return "stream failed: " + e.Code }
 
 type Options struct {
-	MaxStreams    int
-	MaxFrame      uint32
-	StreamTimeout time.Duration
-	WriteTimeout  time.Duration
-	IdleTimeout   time.Duration
-	ExpiresAt     time.Time
-	Accept        func(*Stream, protocol.OpenStream)
+	MaxStreams        int
+	MaxFrame          uint32
+	StreamTimeout     time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	ExpiresAt         time.Time
+	Accept            func(*Stream, protocol.OpenStream)
+	Diagnostic        bool
+	Heartbeat         bool
+	HeartbeatInterval time.Duration
+	HeartbeatTimeout  time.Duration
 }
 type Conn struct {
 	conn      net.Conn
 	reader    io.Reader
 	opts      Options
 	ctx       context.Context
+	parent    context.Context
 	cancel    context.CancelFunc
 	stop      func() bool
 	writer    chan struct{}
@@ -55,14 +60,27 @@ type Conn struct {
 	changed           chan struct{}
 	controlWake       chan struct{}
 	controls          chan protocol.Frame
+	probe             *heartbeatProbe
+	lastPong          time.Time
+	heartbeatWake     chan struct{}
+	terminalError     error
 }
 
 func New(ctx context.Context, conn net.Conn, reader io.Reader, opts Options) (*Conn, error) {
+	if opts.HeartbeatInterval == 0 {
+		opts.HeartbeatInterval = protocol.HeartbeatInterval
+	}
+	if opts.HeartbeatTimeout == 0 {
+		opts.HeartbeatTimeout = protocol.HeartbeatTimeout
+	}
+	if opts.HeartbeatInterval <= 0 || opts.HeartbeatTimeout <= 0 {
+		return nil, ErrProtocol
+	}
 	if conn == nil || reader == nil || opts.MaxStreams < 1 || opts.MaxStreams > 1024 || opts.MaxFrame < 4096 || opts.MaxFrame > protocol.MaxPayloadSize || opts.StreamTimeout <= 0 || opts.WriteTimeout <= 0 || opts.IdleTimeout <= 0 || opts.ExpiresAt.IsZero() {
 		return nil, ErrProtocol
 	}
 	life, cancel := context.WithDeadline(ctx, opts.ExpiresAt)
-	c := &Conn{conn: conn, reader: reader, opts: opts, ctx: life, cancel: cancel, writer: make(chan struct{}, 1), opening: make(chan struct{}, 1), streams: make(map[uint64]*Stream), sendWindow: protocol.InitialConnectionWindow, recvWindow: protocol.InitialConnectionWindow, changed: make(chan struct{}), controlWake: make(chan struct{}, 1), controls: make(chan protocol.Frame, 2*opts.MaxStreams+4)}
+	c := &Conn{conn: conn, reader: reader, opts: opts, ctx: life, parent: ctx, cancel: cancel, writer: make(chan struct{}, 1), opening: make(chan struct{}, 1), streams: make(map[uint64]*Stream), sendWindow: protocol.InitialConnectionWindow, recvWindow: protocol.InitialConnectionWindow, changed: make(chan struct{}), controlWake: make(chan struct{}, 1), controls: make(chan protocol.Frame, 2*opts.MaxStreams+4), heartbeatWake: make(chan struct{}, 1)}
 	c.mu.Lock()
 	c.stop = context.AfterFunc(life, c.Close)
 	c.mu.Unlock()
@@ -164,7 +182,7 @@ func (c *Conn) control(ctx context.Context, typ protocol.Type, id uint64, code s
 	return c.write(ctx, f)
 }
 func (c *Conn) startOpen(ctx context.Context, request protocol.OpenStream) (*Stream, error) {
-	if c.opts.Accept != nil {
+	if c.opts.Accept != nil || c.opts.Diagnostic {
 		return nil, ErrProtocol
 	}
 	// Allocation order must also be wire order. Release this token before
@@ -253,11 +271,21 @@ func (c *Conn) Run() error {
 	defer func() { c.Close(); c.workers.Wait() }()
 	c.workers.Add(1)
 	go func() { defer c.workers.Done(); c.controlLoop() }()
+	if c.opts.Heartbeat {
+		c.workers.Add(1)
+		go func() { defer c.workers.Done(); c.heartbeatLoop() }()
+	}
 	allowed := []protocol.Type{protocol.TypeData, protocol.TypeWindowUpdate, protocol.TypeCloseStream, protocol.TypeResetStream}
 	if c.opts.Accept != nil {
 		allowed = append(allowed, protocol.TypeOpenStream)
 	} else {
 		allowed = append(allowed, protocol.TypeOpenStreamOK, protocol.TypeOpenStreamError)
+	}
+	if c.opts.Diagnostic {
+		allowed = nil
+	}
+	if c.opts.Heartbeat {
+		allowed = append(allowed, protocol.TypePing, protocol.TypePong)
 	}
 	for {
 		deadline := time.Now().Add(c.opts.IdleTimeout)
@@ -265,14 +293,17 @@ func (c *Conn) Run() error {
 			deadline = d
 		}
 		if err := c.conn.SetReadDeadline(deadline); err != nil {
-			return err
+			return c.readError(err)
 		}
 		f, err := protocol.DecodeTypes(c.reader, c.opts.MaxFrame, allowed...)
 		if err != nil {
-			if c.ctx.Err() != nil {
-				return c.ctx.Err()
+			return c.readError(err)
+		}
+		if f.Type == protocol.TypePing || f.Type == protocol.TypePong {
+			if err := c.receiveHeartbeat(f); err != nil {
+				return err
 			}
-			return err
+			continue
 		}
 		if f.Type == protocol.TypeOpenStream {
 			if c.opts.Accept == nil {
@@ -393,4 +424,28 @@ func (c *Conn) Run() error {
 			s.finish(&RemoteError{Code: code})
 		}
 	}
+}
+
+func (c *Conn) readError(err error) error {
+	c.mu.Lock()
+	terminal := c.terminalError
+	c.mu.Unlock()
+	if terminal != nil {
+		return terminal
+	}
+	if c.parent.Err() != nil {
+		return c.parent.Err()
+	}
+	// A socket deadline can fire just before the context timer is scheduled.
+	// Normalize that race so credential expiry has one terminal session reason.
+	if !time.Now().Before(c.opts.ExpiresAt) {
+		return context.DeadlineExceeded
+	}
+	if c.ctx.Err() != nil {
+		if errors.Is(c.ctx.Err(), context.Canceled) {
+			return net.ErrClosed
+		}
+		return c.ctx.Err()
+	}
+	return err
 }

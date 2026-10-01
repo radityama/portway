@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/radityama/portway/internal/mux"
 	"github.com/radityama/portway/internal/protocol"
 	"github.com/radityama/portway/internal/transport"
 )
@@ -58,6 +59,7 @@ type Session struct {
 	closeOnce           sync.Once
 	multiplexing        bool
 	flowControl         bool
+	heartbeat           bool
 	httpRegistered      bool
 	registeredHost      string
 	maxStreams          int
@@ -101,7 +103,7 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		}
 		return frame.EncodeWithLimit(conn, limit)
 	}
-	offer := protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl}, MaxPayloadSize: c.MaxFrame}
+	offer := protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat}, MaxPayloadSize: c.MaxFrame}
 	frame, err := protocol.EncodeHello(offer)
 	if err != nil {
 		return nil, err
@@ -156,16 +158,25 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		return nil, err
 	}
 	keep = true
-	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), flowControl: slices.Contains(ack.Capabilities, protocol.CapabilityFlowControl), maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
+	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), flowControl: slices.Contains(ack.Capabilities, protocol.CapabilityFlowControl), heartbeat: slices.Contains(ack.Capabilities, protocol.CapabilityHeartbeat), maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
 }
 
 // Wait owns the session reader until closure. Closing the session or cancelling
-// its parent context unblocks the read. Active traffic is a later phase.
+// its parent context unblocks the read. Registered diagnostic sessions handle
+// negotiated heartbeat messages; HTTP sessions use ServeHTTP instead.
 func (s *Session) Wait() error {
-	if !s.state.CompareAndSwap(0, 3) && !s.state.CompareAndSwap(2, 3) {
+	registered := s.state.CompareAndSwap(2, 3)
+	if !registered && !s.state.CompareAndSwap(0, 3) {
 		return ErrSessionInUse
 	}
 	defer s.Close()
+	if registered && s.heartbeat {
+		conn, err := mux.New(s.ctx, s.conn, s.reader, s.streamOptions(true))
+		if err != nil {
+			return err
+		}
+		return contextError(s.ctx, conn.Run())
+	}
 	deadline := earlier(time.Now().Add(s.idleTimeout), s.ExpiresAt)
 	if ctxDeadline, ok := s.ctx.Deadline(); ok {
 		deadline = earlier(deadline, ctxDeadline)

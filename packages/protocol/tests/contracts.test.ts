@@ -19,6 +19,8 @@ import {
   INITIAL_CONNECTION_WINDOW,
   WINDOW_UPDATE_SIZE,
   PROTOCOL_VERSION,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_TIMEOUT_MS,
 } from '../src/index.ts';
 
 const fixtures = JSON.parse(
@@ -27,6 +29,26 @@ const fixtures = JSON.parse(
     'utf8',
   ),
 );
+
+test('heartbeat fixtures share strict nonce/timestamp payloads and timing', () => {
+  assert.equal(HEARTBEAT_INTERVAL_MS, fixtures.heartbeat.interval_ms);
+  assert.equal(HEARTBEAT_TIMEOUT_MS, fixtures.heartbeat.timeout_ms);
+  const frames = fixtures.frames.filter(
+    (frame: { name: string }) => frame.name === 'PING' || frame.name === 'PONG',
+  );
+  assert.equal(frames.length, 2);
+  assert.equal(frames[0].payload_hex, frames[1].payload_hex);
+  for (const frame of frames) {
+    assert.equal(frame.stream_id, '0');
+    assert.deepEqual(
+      JSON.parse(Buffer.from(frame.payload_hex, 'hex').toString()),
+      {
+        nonce: '0123456789abcdef',
+        timestamp: '2026-10-01T00:00:00Z',
+      },
+    );
+  }
+});
 
 test('TypeScript shares the Go wire constants and bounded handshake contract', () => {
   assert.equal(PROTOCOL_VERSION, fixtures.version);

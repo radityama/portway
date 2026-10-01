@@ -12,6 +12,9 @@ export const MAX_OPEN_PAYLOAD_SIZE = 64 * 1024;
 export const MAX_HTTP_HEADER_SIZE = 32 * 1024;
 export const MAX_REQUEST_BODY_SIZE = 16 * 1024 * 1024;
 export const MAX_RESPONSE_BODY_SIZE = 64 * 1024 * 1024;
+export const INITIAL_STREAM_WINDOW = 64 * 1024;
+export const INITIAL_CONNECTION_WINDOW = 1024 * 1024;
+export const WINDOW_UPDATE_SIZE = 4 as const;
 export interface OpenStream {
   method: string;
   target: string;

@@ -228,6 +228,13 @@ Implement:
 
 Tests must demonstrate that a slow local service cannot cause unbounded memory use.
 
+Phase 5 implements fixed stream/connection credit windows, validated binary
+WINDOW_UPDATE, bounded reusable receive pages, and a joined control worker.
+Tests fill the shared budget, stall one stream while another progresses, reject
+invalid credit/over-window DATA, and verify reset/cancellation/cleanup credit
+recovery. HTTP requires flow-control negotiation. See [PHASE_5.md](./PHASE_5.md)
+for the allocation bound, acceptance results, and upgrade requirements.
+
 ## 10. Phase 6 — Heartbeat and Reconnect
 
 Implement:

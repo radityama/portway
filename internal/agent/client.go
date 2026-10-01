@@ -57,6 +57,7 @@ type Session struct {
 	stop                func() bool
 	closeOnce           sync.Once
 	multiplexing        bool
+	flowControl         bool
 	httpRegistered      bool
 	registeredHost      string
 	maxStreams          int
@@ -100,7 +101,7 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		}
 		return frame.EncodeWithLimit(conn, limit)
 	}
-	offer := protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing}, MaxPayloadSize: c.MaxFrame}
+	offer := protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl}, MaxPayloadSize: c.MaxFrame}
 	frame, err := protocol.EncodeHello(offer)
 	if err != nil {
 		return nil, err
@@ -155,7 +156,7 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		return nil, err
 	}
 	keep = true
-	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
+	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), flowControl: slices.Contains(ack.Capabilities, protocol.CapabilityFlowControl), maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
 }
 
 // Wait owns the session reader until closure. Closing the session or cancelling
@@ -179,7 +180,7 @@ func (s *Session) Wait() error {
 // Register serializes the request/ACK exchange against Wait and other calls.
 // Any I/O/protocol failure closes the session; partial operations cannot retry.
 func (s *Session) Register(ctx context.Context, request protocol.Register) (protocol.RegisterOK, error) {
-	if request.Protocol == "http" && !s.multiplexing {
+	if request.Protocol == "http" && (!s.multiplexing || !s.flowControl) {
 		return protocol.RegisterOK{}, protocol.ErrInvalidHandshake
 	}
 	frame, err := protocol.EncodeRegister(request)

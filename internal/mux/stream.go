@@ -15,8 +15,6 @@ type Stream struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	stop       func() bool
-	reader     *io.PipeReader
-	inbound    *io.PipeWriter
 	ready      chan error
 	mu         sync.Mutex
 	writeMu    sync.Mutex
@@ -27,20 +25,17 @@ type Stream struct {
 	ended      bool
 	endErr     error
 	once       sync.Once
+	// These fields are guarded by parent.mu, never mu.
+	sendWindow    uint32
+	recvWindow    uint32
+	pendingWindow uint32
+	pages         []*receivePage
+	buffered      int
 }
 
 func (s *Stream) Context() context.Context { return s.ctx }
 func (s *Stream) Read(p []byte) (int, error) {
-	s.mu.Lock()
-	ended, err := s.ended, s.endErr
-	s.mu.Unlock()
-	if ended {
-		return 0, err
-	}
-	if err := s.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return s.reader.Read(p)
+	return s.parent.read(s, p)
 }
 func (s *Stream) Write(p []byte) (int, error) {
 	s.writeMu.Lock()
@@ -54,9 +49,13 @@ func (s *Stream) Write(p []byte) (int, error) {
 	total := 0
 	size := min(uint32(protocol.MaxDataSize), s.parent.opts.MaxFrame)
 	for len(p) > 0 {
-		n := min(len(p), int(size))
+		n, err := s.parent.reserve(s, min(len(p), int(size)))
+		if err != nil {
+			return total, err
+		}
 		f := protocol.Frame{Type: protocol.TypeData, StreamID: s.id, Payload: p[:n]}
 		if err := s.parent.write(s.ctx, f); err != nil {
+			s.parent.refundUnsent(s, uint32(n))
 			return total, err
 		}
 		total += n
@@ -75,20 +74,48 @@ func (s *Stream) Accept() error {
 	return s.parent.control(s.ctx, protocol.TypeOpenStreamOK, s.id, "")
 }
 func (s *Stream) Reject(code string) {
-	_ = s.parent.control(s.parent.ctx, protocol.TypeOpenStreamError, s.id, code)
+	_ = s.parent.queueControl(protocol.TypeOpenStreamError, s.id, code)
 	s.finish(&RemoteError{Code: code})
 }
 func (s *Stream) CloseWrite() error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	s.mu.Lock()
-	if s.sendClosed || s.ended {
+	if !s.accepted || s.sendClosed || s.ended {
 		s.mu.Unlock()
 		return net.ErrClosed
 	}
 	s.sendClosed = true
 	s.mu.Unlock()
 	return s.parent.control(s.ctx, protocol.TypeCloseStream, s.id, "")
+}
+
+// WaitReceiveClose waits for the peer's directional FIN without consuming data.
+// A response sender uses this before releasing a stream, so its cleanup cannot
+// reset a response that the peer still has queued for reading.
+func (s *Stream) WaitReceiveClose() error {
+	c := s.parent
+	for {
+		c.mu.Lock()
+		s.mu.Lock()
+		ended, err, closed := s.ended, s.endErr, s.recvClosed
+		s.mu.Unlock()
+		changed := c.changed
+		c.mu.Unlock()
+		if ended {
+			return err
+		}
+		if closed {
+			return nil
+		}
+		select {
+		case <-changed:
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-c.ctx.Done():
+			return c.ctx.Err()
+		}
+	}
 }
 func (s *Stream) finish(err error) {
 	s.once.Do(func() {
@@ -101,8 +128,6 @@ func (s *Stream) finish(err error) {
 			stop()
 		}
 		s.cancel()
-		s.reader.CloseWithError(err)
-		s.inbound.CloseWithError(err)
 		select {
 		case s.ready <- err:
 		default:
@@ -120,7 +145,7 @@ func (s *Stream) Reset(code string) {
 	}
 	s.finish(&RemoteError{Code: code})
 	if sent {
-		_ = s.parent.control(s.parent.ctx, protocol.TypeResetStream, s.id, code)
+		_ = s.parent.queueControl(protocol.TypeResetStream, s.id, code)
 	}
 }
 func (s *Stream) Close() error {

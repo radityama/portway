@@ -312,7 +312,7 @@ Suggested:
 
 Keep exit codes stable for automation.
 
-### Current CLI connection, registration, and forwarding milestones (Phases 2–4)
+### Current CLI connection, registration, and forwarding milestones (Phases 2–5)
 
 `portway connect --once` verifies one authenticated relay handshake and exits.
 `portway connect` holds an unregistered diagnostic connection until interruption,
@@ -321,6 +321,9 @@ authenticates and registers the configured tunnel. `portway <port>` also checks
 the configured local service before authentication/registration, requests HTTP
 forwarding, and runs the stream receiver after REGISTER_OK assigns a hostname
 and HTTPS URL. The local upstream is fixed to the selected loopback port.
+Phase 5 HTTP forwarding requires negotiated multiplexing and flow control;
+diagnostic authentication/registration remains available to older peers. JSON
+event shapes and exit codes are unchanged by the flow-control implementation.
 
 Human output is concise. `PORTWAY_JSON=1` emits only newline-delimited JSON on
 stdout: `starting`, `tunnel_connecting`, `relay_authenticated`, and (for a held

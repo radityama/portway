@@ -242,7 +242,16 @@ API/database call. Cancellation, expiry, replacement, and shutdown close the
 parent connection's streams and local sockets. Per-stream deadlines and bounded
 synchronous pipes prevent growing receive queues. A blocked consumer can stall
 other streams on that connection until it reads or is cancelled; independent
-receive/send credit windows are the next phase.
+receive/send credit windows are implemented in Phase 5.
+
+Phase 5 replaces synchronous DATA pipes with independently queued stream bytes.
+Fixed 64 KiB stream and 1 MiB connection windows gate sends before taking the
+shared writer lock. Reads return credit through validated binary WINDOW_UPDATE;
+reset/disconnect discard queues and return connection credit. Reusable 4 KiB
+pages cap allocation, including partial-page slack, and one owned control worker
+coalesces updates without an unbounded queue. Stream admission counts workers
+until cleanup finishes. HTTP requires both multiplexing and flow-control
+capabilities. No control-plane, database, or durable-state dependency is added.
 
 ## 9. Multiplexing
 

@@ -15,6 +15,9 @@ func TestEveryTypeAndStreamID(t *testing.T) {
 		}
 		for _, id := range []uint64{0, 1, ^uint64(0)} {
 			frame := Frame{Version: Version, Type: frameType, StreamID: id}
+			if frameType == TypeWindowUpdate {
+				frame.Payload = []byte{0, 0, 0, 1}
+			}
 			err := frame.Validate()
 			if !valid {
 				if !errors.Is(err, ErrUnknownType) {
@@ -23,7 +26,7 @@ func TestEveryTypeAndStreamID(t *testing.T) {
 				continue
 			}
 			streamType := value >= 0x10 && value <= 0x16
-			if streamType == (id != 0) {
+			if frameType == TypeWindowUpdate || streamType == (id != 0) {
 				if err != nil {
 					t.Fatalf("valid type/ID rejected: %v", err)
 				}

@@ -41,7 +41,16 @@ implemented. The CLI emits its HTTPS URL and forwarding readiness. Development
 readiness now verifies both agent registration and public TLS. See
 [PHASE_4.md](./PHASE_4.md).
 
-The next phase is Phase 5: independent stream and connection flow-control windows.
+## Phase 5
+
+Independent 64 KiB stream and 1 MiB connection credit windows, binary
+WINDOW_UPDATE, bounded reusable receive pages, and asynchronous credit return
+are implemented. A slow consumer no longer blocks the shared frame reader.
+Cancellation/reset return connection credit and wake waiting writers; stream
+workers retain admission until cleanup completes. HTTP requires negotiation of
+both stream capabilities. See [PHASE_5.md](./PHASE_5.md).
+
+The next phase is Phase 6: heartbeat and automatic reconnect with backoff/jitter.
 Durable credential issuance, database migrations, and dashboard features remain
 later work.
 
@@ -54,6 +63,7 @@ later work.
 - agent/relay TLS handshake, connection lifecycle, and private development setup
 - tunnel registration, hostname resolution, generation ownership, and local counters
 - public HTTPS routing, bounded HTTP streams, and fixed loopback forwarding
+- stream/connection credit windows, bounded receive pages, and backpressure
 - control-plane HTTP API scaffold
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification

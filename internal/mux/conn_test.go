@@ -13,9 +13,12 @@ import (
 )
 
 func pair(t *testing.T, accept func(*Stream, protocol.OpenStream)) (*Conn, *Conn) {
+	return pairWithLimit(t, 2, accept)
+}
+func pairWithLimit(t *testing.T, limit int, accept func(*Stream, protocol.OpenStream)) (*Conn, *Conn) {
 	t.Helper()
 	a, b := net.Pipe()
-	options := Options{MaxStreams: 2, MaxFrame: protocol.MaxPayloadSize, StreamTimeout: time.Second, WriteTimeout: 100 * time.Millisecond, IdleTimeout: time.Second, ExpiresAt: time.Now().Add(time.Minute)}
+	options := Options{MaxStreams: limit, MaxFrame: protocol.MaxPayloadSize, StreamTimeout: 5 * time.Second, WriteTimeout: time.Second, IdleTimeout: 5 * time.Second, ExpiresAt: time.Now().Add(time.Minute)}
 	origin, err := New(context.Background(), a, a, options)
 	if err != nil {
 		t.Fatal(err)

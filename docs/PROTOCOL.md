@@ -6,7 +6,7 @@ Protocol v1 framing and capability negotiation are implemented in Phase 1.
 Session handshakes and transport ownership are implemented in Phase 2.
 Tunnel registration and generation ownership are implemented in Phase 3.
 HTTP stream metadata, bounded multiplexing, and half-close/reset are implemented
-in Phase 4. Credit-based WINDOW_UPDATE remains Phase 5.
+in Phase 4. Phase 5 adds byte-credit windows and bounded independent receive queues.
 
 ## Transport
 
@@ -47,6 +47,7 @@ payload memory. Types `0x0B`–`0x0F` are intentionally unassigned.
 
 Connection messages (`HELLO` through `PONG`, and `GOAWAY`) use stream ID `0`.
 Stream messages (`OPEN_STREAM` through `RESET_STREAM`) require a nonzero ID.
+WINDOW_UPDATE permits ID 0 for connection credit as defined in Phase 5.
 The full unsigned 64-bit range is supported; JavaScript consumers must use
 `bigint`, not `number`, for stream IDs.
 
@@ -80,7 +81,10 @@ retry a partially written frame.
 0x17 GOAWAY
 ```
 
-Payload encoding is JSON for control messages in protocol v1 and raw bytes for `DATA`. This is deliberate for the starter implementation; a compact binary control codec may be introduced only with a versioned compatibility plan.
+Payload encoding is JSON for control messages except WINDOW_UPDATE, which uses
+the four-byte network-order increment defined by negotiated `flow_control`.
+DATA carries raw bytes. WINDOW_UPDATE was reserved before Phase 5; its payload
+semantics are enabled only when both peers negotiate flow control.
 
 The frame codec validates the envelope and treats payload bytes as opaque.
 Message-specific codecs validate control payloads. `HELLO`/`HELLO_ACK` and
@@ -305,7 +309,55 @@ on the same connection until cancellation/deadline; Phase 5 adds per-stream
 credit windows to remove this head-of-line coupling. Stream concurrency is capped
 (default 32 per tunnel), with a 30s whole-stream deadline. All frame writes,
 including waiting for the writer, have deadlines. Connection/credential expiry
-closes all pipes, local sockets, and owned workers. WINDOW_UPDATE is not enabled.
+closes all pipes, local sockets, and owned workers. This describes the historical
+Phase 4 transport; Phase 5 replaces its synchronous delivery as defined below.
+
+## Flow control (Phase 5)
+
+HTTP registration requires both `multiplexing` and `flow_control` in HELLO_ACK.
+Peers without flow control can authenticate and perform diagnostic registration,
+but cannot enable HTTP forwarding. No fallback silently restores synchronous
+delivery. Both agent and relay use these fixed v1 credit limits in each direction:
+
+- initial stream send/receive window: 65,536 bytes
+- initial connection send/receive window: 1,048,576 bytes
+- DATA consumes its payload byte count from both windows; headers and control
+  frames do not consume credit
+
+WINDOW_UPDATE (`0x14`) has exactly four payload bytes: a positive unsigned uint32
+increment in network byte order. Stream ID 0 updates connection credit; a nonzero
+ID updates that stream's credit. The increment cannot exceed the respective
+initial window, and adding it cannot exceed that window. Zero, malformed lengths,
+overflows, over-credit DATA, DATA after FIN, and updates for unknown future IDs
+terminate the connection. Stream updates require an acknowledged stream; updates
+for released old IDs are validated then ignored. No stream tombstones are retained.
+
+Senders wait for both credits before each DATA frame, outside the shared writer
+lock. Waiting observes stream/connection cancellation and the whole-stream
+deadline. Writers release the shared lock after each bounded DATA frame. A stream
+without credit does not stop control traffic or streams with available credit.
+
+Receivers enqueue DATA without waiting for an application's reader. Application
+Read consumes queued bytes and returns both credits through WINDOW_UPDATE.
+Updates are coalesced by one owned control writer, with bounded counters rather
+than one queued message per read. FIN allows queued bytes to drain before EOF.
+RESET/disconnect discard queued data, restore its connection credit, and wake
+blocked reads/writes. In-flight DATA for a released old stream still consumes
+connection credit and is discarded with connection credit returned; the sender
+must not refund already-sent bytes just because its stream was reset.
+
+Each stream queues at most 64 KiB; the connection queues at most 1 MiB in total.
+Storage uses reusable 4 KiB pages, coalescing tiny frames into pages. Allocated
+receive pages are capped at `256 + 2 * MaxStreams`, including head/tail slack:
+1.25 MiB at the default 32 streams, plus small bounded metadata and one decoded
+DATA frame (at most 16 KiB). Pages allocate lazily and are released on connection
+closure. The control queue is also bounded; saturation fails the connection.
+Control writes have the existing write deadline and the worker is joined on exit.
+
+Many stalled streams may exhaust the connection budget and apply shared
+backpressure; TCP packet loss still affects the shared transport. Independent
+credit windows remove the application-reader coupling within that budget without
+promising transport-level isolation or strict scheduling fairness.
 
 ## Invariants
 

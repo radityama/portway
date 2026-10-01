@@ -99,5 +99,18 @@ func FuzzStreamPayloads(f *testing.F) {
 				}
 			}
 		}
+		for _, id := range []uint64{0, 1} {
+			frame.Type, frame.StreamID = TypeWindowUpdate, id
+			if delta, err := DecodeWindowUpdate(frame); err == nil {
+				encoded, err := EncodeWindowUpdate(id, delta)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := DecodeWindowUpdate(encoded)
+				if err != nil || got != delta {
+					t.Fatal("window update round trip")
+				}
+			}
+		}
 	})
 }

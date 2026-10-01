@@ -225,6 +225,129 @@ func TestHTTPSRoutingAndUnsupportedRequests(t *testing.T) {
 	}
 }
 
+func TestSlowLocalUploadAllowsAnotherHTTPRequest(t *testing.T) {
+	entered, cancelled := make(chan struct{}), make(chan struct{})
+	readBody := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(readBody) }) }
+	defer release()
+	f := setupHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow-upload" {
+			close(entered)
+			<-readBody
+			// A server that never reads a request body cannot observe a peer's
+			// socket closure. Resume reads after the independent request finishes.
+			_, err := io.Copy(io.Discard, r.Body)
+			if err != nil {
+				close(cancelled)
+			}
+			return
+		}
+		fmt.Fprint(w, "fast response")
+	}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, "POST", f.url+"/slow-upload", io.LimitReader(zeroReader{}, protocol.MaxRequestBodySize))
+	request.ContentLength = protocol.MaxRequestBodySize
+	done := make(chan error, 1)
+	go func() {
+		response, err := f.client.Do(request)
+		if response != nil {
+			response.Body.Close()
+		}
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("slow local service did not receive the upload")
+	}
+	response, err := f.client.Get(f.url + "/fast")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if responseBody(t, response) != "fast response" {
+		t.Fatal("slow local upload blocked another HTTP request")
+	}
+	cancel()
+	release()
+	if err := await(t, done); err == nil {
+		t.Fatal("slow upload ignored cancellation")
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled slow upload retained local work")
+	}
+}
+
+func TestLocalEarlyResponseFinishesBeforeUpload(t *testing.T) {
+	f := setupHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/early" {
+			_ = http.NewResponseController(w).EnableFullDuplex()
+			w.Header().Set("Content-Length", "5")
+			w.WriteHeader(422)
+			fmt.Fprint(w, "early")
+			_ = http.NewResponseController(w).Flush()
+			return
+		}
+		w.WriteHeader(204)
+	}, nil)
+	request, _ := http.NewRequest("POST", f.url+"/early", io.LimitReader(zeroReader{}, protocol.MaxRequestBodySize))
+	request.ContentLength = protocol.MaxRequestBodySize
+	response, err := f.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != 422 || responseBody(t, response) != "early" {
+		t.Fatal("early local reply was reset by pending upload cleanup")
+	}
+	response, err = f.client.Get(f.url + "/still-active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 204 {
+		t.Fatal("early upload cancellation damaged the tunnel connection")
+	}
+}
+
+func TestHTTPRegistrationRejectsPeersWithoutFlowControl(t *testing.T) {
+	f := setup(t, func(server *relay.Server, _ []auth.Record) { server.PublicPort = 8443 })
+	conn := rawTLS(t, f)
+	hello, _ := protocol.EncodeHello(protocol.Hello{Version: 1, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing}, MaxPayloadSize: protocol.MaxPayloadSize})
+	if err := hello.Encode(conn); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := protocol.Decode(conn); err != nil {
+		t.Fatal(err)
+	}
+	credential, _ := protocol.EncodeAuth(protocol.Auth{Token: f.token})
+	if err := credential.Encode(conn); err != nil {
+		t.Fatal(err)
+	}
+	response, err := protocol.Decode(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := protocol.DecodeAuthOK(response); err != nil {
+		t.Fatal(err)
+	}
+	registration, _ := protocol.EncodeRegister(protocol.Register{TunnelID: "tnl_local_dev", Generation: 1, Protocol: "http"})
+	if err := registration.Encode(conn); err != nil {
+		t.Fatal(err)
+	}
+	response, err = protocol.Decode(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejection, err := protocol.DecodeRegisterError(response)
+	if err != nil || rejection.Code != protocol.RegisterInvalid {
+		t.Fatal("relay accepted HTTP without byte-credit negotiation")
+	}
+	expectClosed(t, conn)
+}
+
 func TestHTTPTimeoutCancellationAndStreamCapacity(t *testing.T) {
 	entered := make(chan struct{}, 8)
 	cancelled := make(chan struct{}, 8)
@@ -303,7 +426,7 @@ func TestHTTPConcurrentStreamsAndOwnerReplacement(t *testing.T) {
 			defer response.Body.Close()
 			body, err := io.ReadAll(response.Body)
 			if err != nil || string(body) != path {
-				t.Error("concurrent stream crossed responses")
+				t.Errorf("concurrent stream %d: status=%d body=%q error=%v", n, response.StatusCode, body, err)
 			}
 		}(n)
 	}

@@ -30,19 +30,31 @@ type Options struct {
 	Accept        func(*Stream, protocol.OpenStream)
 }
 type Conn struct {
-	conn    net.Conn
-	reader  io.Reader
-	opts    Options
-	ctx     context.Context
-	cancel  context.CancelFunc
-	stop    func() bool
-	writer  chan struct{}
-	mu      sync.Mutex
-	streams map[uint64]*Stream
-	highest uint64
-	closed  bool
-	once    sync.Once
-	workers sync.WaitGroup
+	conn      net.Conn
+	reader    io.Reader
+	opts      Options
+	ctx       context.Context
+	cancel    context.CancelFunc
+	stop      func() bool
+	writer    chan struct{}
+	opening   chan struct{}
+	mu        sync.Mutex
+	streams   map[uint64]*Stream
+	highest   uint64
+	closed    bool
+	once      sync.Once
+	workers   sync.WaitGroup
+	accepting int
+	// Credit, receive buffers, and their notifications are all owned by mu.
+	sendWindow        uint32
+	recvWindow        uint32
+	pendingConnection uint32
+	queuedBytes       int
+	freePages         []*receivePage
+	allocatedPages    int
+	changed           chan struct{}
+	controlWake       chan struct{}
+	controls          chan protocol.Frame
 }
 
 func New(ctx context.Context, conn net.Conn, reader io.Reader, opts Options) (*Conn, error) {
@@ -50,7 +62,7 @@ func New(ctx context.Context, conn net.Conn, reader io.Reader, opts Options) (*C
 		return nil, ErrProtocol
 	}
 	life, cancel := context.WithDeadline(ctx, opts.ExpiresAt)
-	c := &Conn{conn: conn, reader: reader, opts: opts, ctx: life, cancel: cancel, writer: make(chan struct{}, 1), streams: make(map[uint64]*Stream)}
+	c := &Conn{conn: conn, reader: reader, opts: opts, ctx: life, cancel: cancel, writer: make(chan struct{}, 1), opening: make(chan struct{}, 1), streams: make(map[uint64]*Stream), sendWindow: protocol.InitialConnectionWindow, recvWindow: protocol.InitialConnectionWindow, changed: make(chan struct{}), controlWake: make(chan struct{}, 1), controls: make(chan protocol.Frame, 2*opts.MaxStreams+4)}
 	c.mu.Lock()
 	c.stop = context.AfterFunc(life, c.Close)
 	c.mu.Unlock()
@@ -69,12 +81,18 @@ func (c *Conn) Close() {
 		transport.Close(c.conn)
 		c.mu.Lock()
 		c.closed = true
+		c.notifyLocked()
 		streams := c.streams
 		c.streams = make(map[uint64]*Stream)
 		c.mu.Unlock()
 		for _, s := range streams {
 			s.finish(net.ErrClosed)
 		}
+		c.mu.Lock()
+		c.freePages = nil
+		c.allocatedPages = 0
+		c.pendingConnection = 0
+		c.mu.Unlock()
 	})
 }
 func (c *Conn) remove(s *Stream) {
@@ -82,12 +100,13 @@ func (c *Conn) remove(s *Stream) {
 	if c.streams[s.id] == s {
 		delete(c.streams, s.id)
 	}
+	c.discardLocked(s)
+	c.notifyLocked()
 	c.mu.Unlock()
 }
 func (c *Conn) newStreamLocked(ctx context.Context, id uint64) *Stream {
 	life, cancel := context.WithTimeout(ctx, c.opts.StreamTimeout)
-	r, w := io.Pipe()
-	s := &Stream{parent: c, id: id, ctx: life, cancel: cancel, reader: r, inbound: w, ready: make(chan error, 1)}
+	s := &Stream{parent: c, id: id, ctx: life, cancel: cancel, ready: make(chan error, 1), sendWindow: protocol.InitialStreamWindow, recvWindow: protocol.InitialStreamWindow}
 	c.streams[id] = s
 	s.mu.Lock()
 	s.stop = context.AfterFunc(life, func() {
@@ -144,9 +163,24 @@ func (c *Conn) control(ctx context.Context, typ protocol.Type, id uint64, code s
 	}
 	return c.write(ctx, f)
 }
-func (c *Conn) Open(ctx context.Context, request protocol.OpenStream) (*Stream, error) {
+func (c *Conn) startOpen(ctx context.Context, request protocol.OpenStream) (*Stream, error) {
 	if c.opts.Accept != nil {
 		return nil, ErrProtocol
+	}
+	// Allocation order must also be wire order. Release this token before
+	// waiting for ACK so independent stream handshakes can remain concurrent.
+	waitCtx, cancel := context.WithTimeout(ctx, c.opts.WriteTimeout)
+	defer cancel()
+	select {
+	case c.opening <- struct{}{}:
+	case <-waitCtx.Done():
+		return nil, waitCtx.Err()
+	case <-c.ctx.Done():
+		return nil, c.ctx.Err()
+	}
+	defer func() { <-c.opening }()
+	if err := waitCtx.Err(); err != nil {
+		return nil, err
 	}
 	c.mu.Lock()
 	if c.closed {
@@ -174,8 +208,16 @@ func (c *Conn) Open(ctx context.Context, request protocol.OpenStream) (*Stream, 
 	endErr := s.endErr
 	s.mu.Unlock()
 	if ended {
-		_ = c.control(c.ctx, protocol.TypeResetStream, s.id, protocol.StreamCancelled)
+		_ = c.queueControl(protocol.TypeResetStream, s.id, protocol.StreamCancelled)
 		return nil, endErr
+	}
+	return s, nil
+}
+
+func (c *Conn) Open(ctx context.Context, request protocol.OpenStream) (*Stream, error) {
+	s, err := c.startOpen(ctx, request)
+	if err != nil {
+		return nil, err
 	}
 	select {
 	case err := <-s.ready:
@@ -209,7 +251,9 @@ func (c *Conn) Open(ctx context.Context, request protocol.OpenStream) (*Stream, 
 // Run is the only reader. It joins bounded acceptance workers before returning.
 func (c *Conn) Run() error {
 	defer func() { c.Close(); c.workers.Wait() }()
-	allowed := []protocol.Type{protocol.TypeData, protocol.TypeCloseStream, protocol.TypeResetStream}
+	c.workers.Add(1)
+	go func() { defer c.workers.Done(); c.controlLoop() }()
+	allowed := []protocol.Type{protocol.TypeData, protocol.TypeWindowUpdate, protocol.TypeCloseStream, protocol.TypeResetStream}
 	if c.opts.Accept != nil {
 		allowed = append(allowed, protocol.TypeOpenStream)
 	} else {
@@ -248,9 +292,9 @@ func (c *Conn) Run() error {
 				return ErrProtocol
 			}
 			c.highest = f.StreamID
-			if len(c.streams) >= c.opts.MaxStreams {
+			if len(c.streams) >= c.opts.MaxStreams || c.accepting >= c.opts.MaxStreams {
 				c.mu.Unlock()
-				if err := c.control(c.ctx, protocol.TypeOpenStreamError, f.StreamID, protocol.StreamLimit); err != nil {
+				if err := c.queueControl(protocol.TypeOpenStreamError, f.StreamID, protocol.StreamLimit); err != nil {
 					return err
 				}
 				continue
@@ -259,9 +303,31 @@ func (c *Conn) Run() error {
 			s.mu.Lock()
 			s.sent = true
 			s.mu.Unlock()
+			c.accepting++
 			c.mu.Unlock()
 			c.workers.Add(1)
-			go func() { defer c.workers.Done(); defer s.Close(); c.opts.Accept(s, request) }()
+			go func() {
+				defer c.workers.Done()
+				defer func() {
+					s.Close()
+					c.mu.Lock()
+					c.accepting--
+					c.mu.Unlock()
+				}()
+				c.opts.Accept(s, request)
+			}()
+			continue
+		}
+		if f.Type == protocol.TypeWindowUpdate {
+			if err := c.applyWindow(f); err != nil {
+				return err
+			}
+			continue
+		}
+		if f.Type == protocol.TypeData {
+			if err := c.receiveData(f.StreamID, f.Payload); err != nil {
+				return err
+			}
 			continue
 		}
 		c.mu.Lock()
@@ -274,17 +340,6 @@ func (c *Conn) Run() error {
 			}
 			continue
 		}
-		if f.Type == protocol.TypeData {
-			s.mu.Lock()
-			valid := s.accepted && !s.recvClosed
-			s.mu.Unlock()
-			if !valid || len(f.Payload) == 0 {
-				return ErrProtocol
-			}
-			// No queued bodies: synchronous pipe delivery preserves a fixed memory bound.
-			_, _ = s.inbound.Write(f.Payload)
-			continue
-		}
 		code, err := protocol.DecodeStreamControl(f)
 		if err != nil {
 			return err
@@ -292,34 +347,48 @@ func (c *Conn) Run() error {
 		switch f.Type {
 		case protocol.TypeOpenStreamOK:
 			s.mu.Lock()
+			ended := s.ended
 			valid := c.opts.Accept == nil && !s.accepted && !s.ended
 			if valid {
 				s.accepted = true
 			}
 			s.mu.Unlock()
 			if !valid {
+				if ended {
+					continue
+				}
 				return ErrProtocol
 			}
-			s.ready <- nil
+			select {
+			case s.ready <- nil:
+			default: // Cancellation may already have supplied the terminal reason.
+			}
 		case protocol.TypeOpenStreamError:
 			s.mu.Lock()
+			ended := s.ended
 			valid := c.opts.Accept == nil && !s.accepted
 			s.mu.Unlock()
 			if !valid {
+				if ended {
+					continue
+				}
 				return ErrProtocol
 			}
 			s.finish(&RemoteError{Code: code})
 		case protocol.TypeCloseStream:
+			c.mu.Lock()
 			s.mu.Lock()
 			valid := s.accepted && !s.recvClosed
 			if valid {
 				s.recvClosed = true
 			}
 			s.mu.Unlock()
+			s.pendingWindow = 0
+			c.notifyLocked()
+			c.mu.Unlock()
 			if !valid {
 				return ErrProtocol
 			}
-			_ = s.inbound.Close()
 		case protocol.TypeResetStream:
 			s.finish(&RemoteError{Code: code})
 		}

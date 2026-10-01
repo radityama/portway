@@ -83,13 +83,16 @@ func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, addr
 		request.Body = http.NoBody
 	}
 	uploaded := make(chan struct{})
-	var uploadErr error
 	go func() {
 		defer close(uploaded)
-		uploadErr = request.Write(conn)
-		if uploadErr != nil {
-			conn.Close()
-			stream.Reset(protocol.StreamInvalid)
+		if uploadErr := request.Write(conn); uploadErr != nil {
+			// A local service can reply and close before its upload finishes.
+			// Preserve a buffered response on socket-write failures; other body
+			// failures close the socket to interrupt a response waiting for input.
+			var socketError net.Error
+			if !errors.As(uploadErr, &socketError) {
+				conn.Close()
+			}
 		}
 	}()
 	defer func() { conn.Close(); stream.Close(); <-uploaded }()
@@ -117,18 +120,12 @@ func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, addr
 		stream.Reset(code)
 		return
 	}
-	// Finish the upload before releasing this stream; an early local response
-	// aborts the pending request body instead of leaving an orphaned goroutine.
-	select {
-	case <-uploaded:
-		if uploadErr != nil {
-			return
-		}
-	default:
-		conn.Close()
-		stream.Reset(protocol.StreamCancelled)
-		<-uploaded
+	// Send response FIN before waiting for the request direction. The relay can
+	// finish this response and cancel a pending upload. Cleanup must not reset
+	// response bytes still queued at the relay, including bodyless requests.
+	if err := stream.CloseWrite(); err != nil {
 		return
 	}
-	_ = stream.CloseWrite()
+	<-uploaded
+	_ = stream.WaitReceiveClose()
 }

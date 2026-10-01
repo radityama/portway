@@ -19,6 +19,8 @@ import (
 	"github.com/radityama/portway/internal/protocol"
 )
 
+const earlyResponseDrainTimeout = time.Second
+
 func CanonicalHost(authority string, port int) (string, error) {
 	if len(authority) > 259 {
 		return "", protocol.ErrInvalidHandshake
@@ -196,10 +198,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = controller.EnableFullDuplex()
 	uploaded := make(chan struct{})
 	uploadResult := make(chan struct{})
+	stopUpload := make(chan struct{})
+	successfulResponse := false // Published to the upload worker by stopUpload.
+	var responseBody io.Closer
 	var uploadErr error
 	go func() {
 		defer close(uploaded)
-		_, uploadErr = io.Copy(stream, http.MaxBytesReader(nil, r.Body, protocol.MaxRequestBodySize))
+		limitedBody := http.MaxBytesReader(nil, r.Body, protocol.MaxRequestBodySize)
+		_, uploadErr = io.Copy(stream, limitedBody)
 		if uploadErr == nil {
 			uploadErr = stream.CloseWrite()
 		}
@@ -211,15 +217,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				code = protocol.StreamBodyLimit
 			}
 			stream.Reset(code)
+			select {
+			case <-stopUpload:
+				if successfulResponse && r.Context().Err() == nil {
+					// Finishing an early response with unread TCP input can reset
+					// the socket before the client receives it. Drain only within
+					// the remaining body cap and the cleanup deadline below.
+					_, _ = io.Copy(io.Discard, limitedBody)
+				}
+			default:
+			}
 		}
 	}()
 	defer func() {
-		// Interrupt pending public-body reads before joining their writer, including
-		// early upstream replies. Reset deadlines only after that reader has stopped.
-		_ = controller.SetReadDeadline(time.Now())
+		deadline := time.Now()
+		if successfulResponse {
+			deadline = deadline.Add(earlyResponseDrainTimeout)
+			if streamDeadline, ok := ctx.Deadline(); ok && streamDeadline.Before(deadline) {
+				deadline = streamDeadline
+			}
+		}
+		_ = controller.SetReadDeadline(deadline)
+		close(stopUpload)
 		stream.Close()
-		r.Body.Close()
+		if responseBody != nil {
+			responseBody.Close()
+		}
 		<-uploaded
+		r.Body.Close()
 		_ = controller.SetReadDeadline(time.Time{})
 	}()
 	response, err := httpwire.ReadResponse(bufio.NewReader(stream), r)
@@ -236,7 +261,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpFailure(w, "upstream response unavailable", status)
 		return
 	}
-	defer func() { stream.Close(); response.Body.Close() }()
+	responseBody = response.Body
 	if response.ContentLength > protocol.MaxResponseBodySize {
 		httpFailure(w, "upstream response exceeds limit", 502)
 		return
@@ -269,6 +294,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if readErr != nil {
 			panic(http.ErrAbortHandler)
 		}
+	}
+	if controller.Flush() == nil {
+		successfulResponse = true
 	}
 }
 func streamStatus(ctx context.Context, err error) int {

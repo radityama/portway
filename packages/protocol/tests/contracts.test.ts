@@ -15,6 +15,9 @@ import {
   MAX_OPEN_PAYLOAD_SIZE,
   MAX_HTTP_HEADER_SIZE,
   STREAM_ERROR_CODES,
+  INITIAL_STREAM_WINDOW,
+  INITIAL_CONNECTION_WINDOW,
+  WINDOW_UPDATE_SIZE,
   PROTOCOL_VERSION,
 } from '../src/index.ts';
 
@@ -70,6 +73,36 @@ test('HTTP stream fixtures share limits and canonical metadata', () => {
   assert.equal(payload('RESET_STREAM').code, STREAM_ERROR_CODES.CANCELLED);
 });
 
+test('flow-control windows and binary updates share the Go contract', () => {
+  const flow = fixtures.flow_control;
+  assert.equal(INITIAL_STREAM_WINDOW, flow.initial_stream_window);
+  assert.equal(INITIAL_CONNECTION_WINDOW, flow.initial_connection_window);
+  assert.equal(WINDOW_UPDATE_SIZE, flow.window_update_size);
+  const stream = fixtures.frames.find(
+    (frame: { name: string }) => frame.name === 'WINDOW_UPDATE',
+  );
+  for (const fixture of [stream, flow.connection_update]) {
+    const wire = Buffer.from(fixture.wire_hex, 'hex');
+    assert.equal(wire[1], FRAME_TYPES.WINDOW_UPDATE);
+    assert.equal(wire.readBigUInt64BE(4), BigInt(fixture.stream_id));
+    assert.equal(wire.readUInt32BE(12), WINDOW_UPDATE_SIZE);
+    assert.equal(wire.length, FRAME_HEADER_SIZE + WINDOW_UPDATE_SIZE);
+    assert.deepEqual(
+      wire.subarray(FRAME_HEADER_SIZE),
+      Buffer.from(fixture.payload_hex, 'hex'),
+    );
+    const delta = wire.readUInt32BE(FRAME_HEADER_SIZE);
+    assert.ok(
+      delta > 0 &&
+        delta <=
+          (fixture.stream_id === '0'
+            ? INITIAL_CONNECTION_WINDOW
+            : INITIAL_STREAM_WINDOW),
+    );
+  }
+  assert.equal(flow.connection_update.stream_id, '0');
+});
+
 test('registration preserves all 64 generation bits and shares error codes', () => {
   const payload = (name: string) =>
     JSON.parse(
@@ -109,7 +142,9 @@ test('all shared fixtures have exact network-order headers and payload bytes', (
     assert.equal(wire.length, FRAME_HEADER_SIZE + payload.length);
     assert.deepEqual(wire.subarray(FRAME_HEADER_SIZE), payload);
     const streamType = fixture.type >= 0x10 && fixture.type <= 0x16;
-    assert.equal(BigInt(fixture.stream_id) !== 0n, streamType);
+    if (fixture.type !== FRAME_TYPES.WINDOW_UPDATE) {
+      assert.equal(BigInt(fixture.stream_id) !== 0n, streamType);
+    }
   }
   const data = fixtures.frames.find(
     (frame: { name: string }) => frame.name === 'DATA',

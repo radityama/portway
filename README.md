@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–4 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses stream through bounded logical streams. The API and dashboard are skeletons.
+Phases 0–5 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. The API and dashboard are skeletons.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -122,9 +122,12 @@ Public ingress has its own `PUBLIC_BIND_HOST`, `PUBLIC_PORT`,
 a certificate covering the assigned hostnames. Phase 4 supports ordinary HTTP
 with 32 streams per tunnel, 30-second stream deadlines, 16 MiB request bodies,
 64 MiB response bodies, and bounded headers. HTTP/2, upgrades, CONNECT, and
-trailers are not enabled. Slow streams can delay others on their shared agent
-connection; independent flow-control windows arrive in Phase 5. See
-[Phase 4](./docs/PHASE_4.md) for all limits and settings.
+trailers are not enabled. Phase 5 queues at most 64 KiB per stream and 1 MiB per
+connection. A stalled consumer no longer blocks the shared frame reader; many
+stalled streams can still fill the shared budget. Update agent and relay together:
+HTTP requires negotiated `multiplexing` and `flow_control`. See
+[Phase 4](./docs/PHASE_4.md) for HTTP settings and [Phase 5](./docs/PHASE_5.md)
+for flow-control bounds and upgrade behavior.
 
 ## Quality gates
 
@@ -135,7 +138,7 @@ pnpm db:validate
 pnpm test:bootstrap
 ```
 
-`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, and production builds. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, and stream payloads for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
+`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, and production builds. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, and stream/window payloads for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
 
 Stop the development stack before running production builds; Next.js uses the same `.next/` directory for both.
 

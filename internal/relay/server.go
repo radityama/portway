@@ -167,7 +167,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	if err != nil || remote.MaxPayloadSize < protocol.MaxHandshakePayloadSize {
 		return protocol.ErrInvalidHandshake
 	}
-	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing}, MaxPayloadSize: s.MaxFrame})
+	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl}, MaxPayloadSize: s.MaxFrame})
 	if err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 		_ = s.rejectRegistration(conn, protocol.RegisterInvalid, ack.MaxPayloadSize, registrationDeadline)
 		return protocol.ErrInvalidHandshake
 	}
-	if request.Protocol == "http" && (s.PublicPort == 0 || !slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing)) {
+	if request.Protocol == "http" && (s.PublicPort == 0 || !slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing) || !slices.Contains(ack.Capabilities, protocol.CapabilityFlowControl)) {
 		_ = s.rejectRegistration(conn, protocol.RegisterInvalid, ack.MaxPayloadSize, registrationDeadline)
 		return protocol.ErrInvalidHandshake
 	}

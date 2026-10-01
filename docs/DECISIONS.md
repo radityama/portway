@@ -41,6 +41,23 @@ Development public TLS uses a separate local CA/certificate set so upgrading
 from Phase 3 preserves existing agent credentials. No dependency or durable
 schema change is needed.
 
+## ADR-010: Fixed Negotiated Byte-Credit Windows
+
+The `flow_control` capability enables fixed 64 KiB stream and 1 MiB connection
+windows in each direction. A four-byte unsigned network-order WINDOW_UPDATE
+payload defines the previously reserved frame; ID 0 addresses connection credit.
+Fixed limits avoid a second configurable wire negotiation. HTTP requires both
+stream capabilities, so agents and relays must upgrade together; diagnostic
+registration remains compatible with peers that do not offer flow control.
+
+Receive DATA copies into pooled 4 KiB pages and does not wait for an application
+reader. Queue byte limits and an allocation cap including per-stream page slack
+bound memory even for tiny frames. One owned worker coalesces credit counters and
+drains bounded reset/rejection controls. Reads return credit; reset discards return
+connection credit; already-sent bytes are never refunded by the sender. Admission
+counts acceptance workers until cleanup completes. Shared budget saturation and
+TCP/socket backpressure still apply. No dependency or durable model is added.
+
 ## ADR-001: Go for Agent and Relay
 
 Go is the baseline implementation language for the data plane because it provides a strong networking standard library, straightforward concurrency, and easy cross-platform distribution.

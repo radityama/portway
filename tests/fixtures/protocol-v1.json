@@ -5,6 +5,18 @@
   "max_handshake_payload_size": 4096,
   "max_capabilities": 32,
   "max_capability_name_size": 64,
+  "flow_control": {
+    "initial_stream_window": 65536,
+    "initial_connection_window": 1048576,
+    "window_update_size": 4,
+    "connection_update": {
+      "name": "WINDOW_UPDATE",
+      "type": 20,
+      "stream_id": "0",
+      "payload_hex": "00010000",
+      "wire_hex": "0114000000000000000000000000000400010000"
+    }
+  },
   "capabilities": {
     "MULTIPLEXING": "multiplexing",
     "FLOW_CONTROL": "flow_control",
@@ -114,8 +126,8 @@
       "name": "WINDOW_UPDATE",
       "type": 20,
       "stream_id": "42",
-      "payload_hex": "7b7d",
-      "wire_hex": "01140000000000000000002a000000027b7d"
+      "payload_hex": "00004000",
+      "wire_hex": "01140000000000000000002a0000000400004000"
     },
     {
       "name": "CLOSE_STREAM",

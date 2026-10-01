@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"net"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,15 @@ import (
 	"github.com/radityama/portway/internal/protocol"
 	"github.com/radityama/portway/internal/transport"
 )
+
+func TestHTTPRegistrationRequiresBothStreamCapabilities(t *testing.T) {
+	for _, session := range []*Session{{multiplexing: true}, {flowControl: true}, {}} {
+		_, err := session.Register(context.Background(), protocol.Register{TunnelID: "tnl_fixture", Generation: 1, Protocol: "http"})
+		if !errors.Is(err, protocol.ErrInvalidHandshake) || session.state.Load() != 0 {
+			t.Fatal("HTTP registration proceeded without negotiated stream credits")
+		}
+	}
+}
 
 func TestAgentRejectsHostileRegistrationResponses(t *testing.T) {
 	for _, kind := range []string{"wrong tunnel", "wrong connection", "wrong generation", "unsafe hostname", "unexpected header", "truncated", "disappeared", "timeout", "cancel"} {

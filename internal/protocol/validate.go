@@ -35,7 +35,8 @@ func (f Frame) Validate() error {
 	return f.validateHeader(uint64(len(f.Payload)), MaxPayloadSize)
 }
 
-// IsStream reports whether the type addresses a logical stream, not a connection.
+// IsStream reports whether the type can address a logical stream.
+// WINDOW_UPDATE also allows ID zero for connection-wide credit.
 func (t Type) IsStream() bool {
 	return t >= TypeOpenStream && t <= TypeResetStream
 }
@@ -60,11 +61,14 @@ func (f Frame) validateHeader(length uint64, limit uint32) error {
 	if f.Flags != 0 {
 		return ErrInvalidFlags
 	}
-	if f.Type.IsStream() != (f.StreamID != 0) {
+	if f.Type != TypeWindowUpdate && f.Type.IsStream() != (f.StreamID != 0) {
 		return ErrInvalidStreamID
 	}
 	if length > uint64(limit) {
 		return fmt.Errorf("%w: %d > %d", ErrPayloadTooLarge, length, limit)
+	}
+	if f.Type == TypeWindowUpdate && length != WindowUpdateSize {
+		return ErrInvalidWindow
 	}
 	if f.Type >= TypeHello && f.Type <= TypeRegisterError && length > MaxHandshakePayloadSize {
 		return ErrPayloadTooLarge

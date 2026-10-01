@@ -286,6 +286,35 @@ window increases
 
 A sender must stop when its send window reaches zero.
 
+Phase 5 implements this model with fixed 64 KiB stream windows and a 1 MiB
+connection window in each direction. DATA consumes both credits. Positive
+four-byte network-order WINDOW_UPDATE increments restore stream credit for a
+nonzero ID or connection credit for ID 0. Updates cannot exceed the original
+window; malformed increments, overflow, or over-credit DATA close the connection.
+Both peers must negotiate `flow_control` as well as `multiplexing` for HTTP.
+
+The shared reader enqueues validated DATA and continues processing other frames.
+Application consumption returns credit; FIN drains queued bytes before EOF.
+Reset/disconnect release buffered bytes and restore connection credit, including
+late DATA for a released ID. Sending waits observe context/deadline outside the
+writer lock. A single stalled consumer cannot stop other streams while connection
+credit remains. Many stalled streams can exhaust the shared budget; TCP loss and
+a blocked socket writer still affect the common transport.
+
+Receive storage coalesces tiny frames into reusable 4 KiB pages. Queued bytes are
+capped at 64 KiB per stream and 1 MiB per connection; allocated pages are capped
+at `256 + 2 * MaxStreams`, or 1.25 MiB at 32 streams, including page slack. One
+owned control worker coalesces returned-credit counters and drains a bounded
+reset/rejection queue. Stream worker admission is held until cleanup finishes.
+Exact wire rules and failure handling are in [PROTOCOL.md](./PROTOCOL.md).
+
+Response FIN precedes waiting for the request direction so early replies can
+complete and cancel pending uploads. Agent cleanup waits for request FIN/reset
+before releasing the response stream. After completing a public response, the
+relay may drain remaining request input within its body cap for at most one
+second, bounded by the stream deadline, to avoid truncating the reply with a TCP
+reset. Failed/cancelled requests interrupt body reads immediately.
+
 ## 13. Backpressure
 
 Backpressure must propagate:

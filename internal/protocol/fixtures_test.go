@@ -26,7 +26,13 @@ type protocolFixtures struct {
 	MaxCapabilities         int               `json:"max_capabilities"`
 	MaxCapabilityNameSize   int               `json:"max_capability_name_size"`
 	Capabilities            map[string]string `json:"capabilities"`
-	Frames                  []wireFixture     `json:"frames"`
+	FlowControl             struct {
+		InitialStreamWindow     uint32      `json:"initial_stream_window"`
+		InitialConnectionWindow uint32      `json:"initial_connection_window"`
+		WindowUpdateSize        int         `json:"window_update_size"`
+		ConnectionUpdate        wireFixture `json:"connection_update"`
+	} `json:"flow_control"`
+	Frames []wireFixture `json:"frames"`
 }
 
 func loadFixtures(t testing.TB) protocolFixtures {

@@ -7,4 +7,6 @@ ACK binding checks and private local generation reservations. Register and Wait
 cannot share the reader concurrently; failed exchanges close the socket.
 Phase 4's `ServeHTTP` owns the reader after an HTTP registration, dispatches
 bounded streams to one fixed loopback port, and joins local forwarding workers
-on cancellation or connection closure. See [Phase 4](../../docs/PHASE_4.md).
+on cancellation or connection closure. Phase 5 requires flow-control negotiation
+and consumes independent bounded queues with returned byte credit. See
+[Phase 5](../../docs/PHASE_5.md).

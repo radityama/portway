@@ -27,4 +27,4 @@ prisma/*.db
 
 # Runtime
 .tmp/
-logs/
+/logs/

@@ -80,8 +80,8 @@ unsupported. See [PHASE_8.md](./PHASE_8.md).
 
 Phases 9–10 add the scoped control API and durable PostgreSQL policy described
 below. Phase 11 adds live relay health, capacity and selection. Phase 12 adds DNS
-ownership, custom aliases and certificate lifecycle. The next phase is Phase 13:
-dashboard implementation.
+ownership, custom aliases and certificate lifecycle. Phase 13 adds the scoped
+browser dashboard. The next phase is Phase 14: observability.
 
 ## What this starter contains
 
@@ -101,6 +101,8 @@ dashboard implementation.
 - live relay health/capacity, fenced reports, draining and generation-based failover
 - scoped custom domains, DNS TXT proofs and generation-bound relay-local aliases
 - atomic wildcard/custom PEM reload and stable local CA issuance/renewal tooling
+- responsive scoped dashboard with encrypted HttpOnly sessions and role-aware forms
+- real Chromium dashboard tests covering DNS, tenant isolation and failure recovery
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification
 - Codex/Claude Code instructions and master prompt
@@ -117,6 +119,7 @@ Run the following locally when the required toolchains/dependencies are installe
 
 ```bash
 make setup
+pnpm exec playwright install chromium
 make check
 make fuzz
 pnpm db:validate
@@ -178,3 +181,23 @@ reload preserves the prior valid cache; new handshakes reject expired certificat
 mkcert and externally issued PEM files are supported. Clients install trust
 explicitly. Operators supply production DNS/ingress and external ACME issuance;
 ACME account automation remains future work. See [PHASE_12.md](./PHASE_12.md).
+
+## Phase 13
+
+Login, overview, tunnel list/detail, domains, relays, logs and settings consume the
+same API used by the CLI. Provisioned user keys are exchanged for bounded sessions
+inside authenticated encrypted HttpOnly cookies; parent keys/session bearers are
+never returned to browser JavaScript or browser storage. A private server key,
+fixed destination/origin, strict mutation Origin checks, allowlisted routes,
+request/reply/concurrency limits, deadlines and cancellation protect the adapter.
+
+Project/tunnel creation and confirmed revocation obey API roles and scope. Domain
+forms expose one-time TXT proofs, verification, activation, challenge renewal and
+confirmed disabling; ACTIVE policy does not imply certificate readiness. Lists
+use signed cursors and manual refresh; page prefetching is disabled. Logout clears
+the local cookie during API outages and explicitly reports unconfirmed remote
+revocation. Relays remain read-only, account edits/key administration are external,
+and request logs/metrics remain unsupported until Phase 14. No persistent schema,
+protocol or application data path changes were needed. Browser verification uses
+real production Next.js, PostgreSQL, Redis, DNS, API and Chromium. See
+[PHASE_13.md](./PHASE_13.md).

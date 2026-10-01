@@ -724,3 +724,61 @@ supply trusted local PEM files; production may use an external ACME issuer and
 atomically replace versioned pairs/manifest. ACME account/challenge automation is
 post-MVP work. Operators must route wildcard/custom DNS to the assigned relay and
 keep ingress consistent with Phase 11; there is no cross-relay byte proxy.
+
+## 20. Phase 13 browser dashboard adapter
+
+The Next.js dashboard consumes the existing /api/v1 contract. It has no database,
+Redis, relay-key or application-byte access. Browser-local routes below belong to
+the dashboard origin and are outside the control-plane OpenAPI base.
+
+- POST /api/session accepts JSON {token} with a provisioned user API key, calls
+  POST /auth/login once and encrypts the returned session in a host-only HttpOnly,
+  SameSite=Lax cookie (Secure for a configured HTTPS dashboard origin). The browser
+  cookie is authenticated with AES-256-GCM under DASHBOARD_SESSION_KEY_FILE, a
+  private regular file containing a 32-byte base64url key. The key is loaded once
+  per server process; setup creates and preserves a separate development key.
+  Editing a cookie cannot substitute a parent API key. The browser
+  response contains expiry only, never the session bearer. No local/sessionStorage
+  or URL holds authentication secrets. Login does not silently load operator keys.
+- DELETE /api/session revokes the cookie's session through /auth/logout and always
+  clears the local cookie. During control failure, the response explicitly reports
+  that remote revocation could not be confirmed; the bounded API session expires
+  normally. It never substitutes the user's parent API key for a session.
+- /api/control/* forwards only allowlisted scoped metadata: me; project list/create;
+  tunnel list/detail/create/revoke; domain list/detail/create/challenge/verify/
+  activate/disable; relay list/detail; scoped tunnel logs/metrics reads. Internal
+  relay operations, connect/credential issuance, arbitrary paths/destinations and
+  caller Authorization/Cookie forwarding are excluded. The fixed server API URL
+  selects the destination. API envelopes/statuses and keyed metadata mutations
+  remain authoritative. Successful mutations invalidate dashboard views before
+  browser refresh. Mutation controls share pending state through a document reload
+  so another change cannot overlap an unfinished view update. One-time proof forms
+  defer that reload until acknowledgement/close to retain their current value.
+  Link prefetching and automatic polling are disabled. Browser
+  sessions receive no relay credentials.
+- Every mutation requires exact Origin equality with DASHBOARD_ORIGIN, JSON content
+  type and same-origin browser semantics; missing/cross-origin requests fail before
+  API access. Inbound bodies are bounded to 64 KiB with a 5s deadline, API replies
+  to 256 KiB, and concurrent API calls to 32 per process. Calls have a complete
+  configurable timeout, propagate cancellation and never follow redirects/replay.
+- DASHBOARD_API_URL is a fixed /api/v1 HTTPS URL, or numeric loopback/localhost HTTP
+  for development. DASHBOARD_ORIGIN is a fixed HTTPS origin, or loopback HTTP in
+  development. They default to the development API/dashboard ports. Remote private
+  CAs use Node's configured trust (for example NODE_EXTRA_CA_CERTS), without disabling
+  TLS verification. Production requires its own private session-key file; key
+  replacement requires server restart and invalidates existing dashboard cookies.
+  DASHBOARD_API_TIMEOUT_MS defaults to 5000, allowed 100..10000.
+- Authenticated SSR and browser replies are uncached. Auth failure redirects to
+  /login or clears a browser adapter cookie on 401. Protected pages always obtain
+  authoritative /me context; role-based UI is a convenience, API authorization is
+  the enforcement boundary. Domain proofs appear once in the current form and
+  are not stored or logged. API response errors are rendered safely as text.
+
+Pages follow IMPLEMENTATION's order. Overview/list/detail use real bounded API
+metadata and cursor pagination; CONNECTING is issuance state, not proof of live
+presence. Tunnel actions create policy/revoke and show a CLI command, without
+changing generations just to render a page. Relays are read-only for user keys.
+Domain forms expose the ownership lifecycle and distinguish ACTIVE routing policy
+from certificate readiness. Settings shows scoped account/organization/role and
+logout. Logs shows the scoped API result, including honest 501 NOT_IMPLEMENTED;
+request metrics, traffic recording and audit browsing await supported API contracts.

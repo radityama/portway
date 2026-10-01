@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–12 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. Custom domains now use DNS TXT ownership proofs, current-generation relay aliases and reloadable certificates with local issuance and renewal. The dashboard remains a skeleton.
+Phases 0–13 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. Custom domains now use DNS TXT ownership proofs, current-generation relay aliases and reloadable certificates with local issuance and renewal. The dashboard now provides scoped login, overview, tunnel and domain management, read-only relay health and account settings with encrypted HttpOnly sessions. Request logs and metrics await Phase 14.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Phase 12](./docs/PHASE_12.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Phase 12](./docs/PHASE_12.md), [Phase 13](./docs/PHASE_13.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -135,13 +135,14 @@ for flow-control bounds. See [Phase 8](./docs/PHASE_8.md) for WebSocket and stre
 ## Quality gates
 
 ```bash
+pnpm exec playwright install chromium
 make check
 make fuzz
 pnpm db:validate
 pnpm test:bootstrap
 ```
 
-`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, production builds, and real API/CLI/relay tests in memory and PostgreSQL modes, plus two-relay failover and Redis presence tests. PostgreSQL integration uses isolated temporary Docker containers to verify migrations, constraints, concurrent writes, rollback, seed safety and outage isolation. Docker must be available. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, stream/window payloads, and WebSocket response headers for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
+`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, production builds, and real API/CLI/relay tests in memory and PostgreSQL modes, plus two-relay failover, Redis presence and real Chromium dashboard workflows. PostgreSQL integration uses isolated temporary Docker containers to verify migrations, constraints, concurrent writes, rollback, seed safety and outage isolation. Docker must be available. Install Chromium with the command above, or set `DASHBOARD_CHROMIUM_PATH` to an installed executable. `pnpm test:dashboard` runs the browser gate against a production build; `make dashboard-integration` builds first. CI installs Chromium and its system dependencies. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, stream/window payloads, and WebSocket response headers for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
 
 Stop the development stack before running production builds; Next.js uses the same `.next/` directory for both.
 
@@ -364,3 +365,69 @@ remains future work. Retired local bundles are retained for rollback; remove the
 only after confirming that no deployed manifest references them. Domain records
 are initially capped at 128, including disabled reservations. See
 [Phase 12](./docs/PHASE_12.md) for verification and operational boundaries.
+
+## Dashboard (Phase 13)
+
+Run `make dev`, open the exact printed dashboard address (normally
+`http://127.0.0.1:3000`), and sign in with the provisioned development user key in
+`.tmp/dev/api-token`. Setup preserves existing keys and creates a separate private
+`.tmp/dev/dashboard-session-key` for cookie encryption. The login form exchanges
+the user key for an API session lasting at most one hour. Session bearers stay
+inside authenticated encrypted HttpOnly cookies and are never exposed to browser
+JavaScript, URLs or browser storage.
+
+The overview displays up to 100 resources per kind, with partial counts labeled.
+Tunnels and domains use 50-result signed cursor pages. Project/tunnel selectors
+show the first 100 accessible items; larger workspaces can use the scoped API.
+Owners, administrators and members can create projects/tunnels and manage domain
+ownership; viewers can read. The API enforces authorization on every operation.
+Tunnel detail shows the CLI command without allocating generations or credentials.
+Revocation requires typing the tunnel name. Domain forms show one-time DNS TXT
+proofs, then verification, activation, challenge renewal and confirmed disabling.
+Save proof values before leaving the form. ACTIVE is routing policy; certificate
+issuance, trust and ingress still follow the Phase 12 operator workflow.
+
+Relay health reflects actual API reports. Stored tunnel connection states are
+policy metadata, not live presence measurements. Pages refresh on successful
+mutations or the Refresh button, with automatic polling and link prefetching
+disabled. If a signed cursor expires after an API restart, use First page.
+Settings shows the current organization/role and sign-out. Logs explicitly reports
+that request recording is unavailable; metrics and audit browsing await Phase 14.
+Account editing and API-key administration remain operator tasks.
+
+Logout revokes the API session and clears the browser cookie. During an API outage,
+local logout still clears the cookie and explicitly reports that remote revocation
+could not be confirmed; the old API session retains its normal expiry. API restarts
+preserve durable sessions. Cookie-key rotation requires a dashboard server restart
+and invalidates existing browser cookies; provision the same private key on each
+dashboard instance if sessions must survive instance changes.
+
+For a standalone production dashboard, build with `make build` and configure:
+
+```bash
+DASHBOARD_API_URL=https://control.example.com/api/v1
+DASHBOARD_ORIGIN=https://console.example.com
+DASHBOARD_SESSION_KEY_FILE=/run/secrets/portway-dashboard-session-key
+DASHBOARD_API_TIMEOUT_MS=5000
+```
+
+These are server environment variables. The session-key file must be a private
+regular file containing a 32-byte base64url key (43 characters, optional final
+newline), readable only by the dashboard user. Provision it once through your
+secret manager and keep it out of source control. The configured origin must
+match the browser's exact origin; cookies are host-only, HttpOnly, SameSite=Lax,
+and Secure with HTTPS. A TLS reverse proxy can terminate public HTTPS in front
+of the loopback Next.js listener. Private API CAs use Node's configured trust,
+such as `NODE_EXTRA_CA_CERTS`; TLS verification stays enabled. HTTP destinations
+are restricted to loopback development. Neither request Host headers nor browser
+input choose the API destination.
+
+The adapter caps inbound JSON at 64 KiB, API replies at 256 KiB and concurrent
+API calls at 32 per server process. Complete API deadlines are 100–10000 ms,
+default 5000 ms; cancellation propagates and requests never redirect or replay.
+The existing API's per-IP quota sees the dashboard server's address, so size
+quotas and dashboard capacity for the expected users. The adapter does not add
+trusted forwarded-client headers or access internal relay/credential endpoints.
+The dashboard is outside the application traffic path and adds no database schema.
+
+See [Phase 13](./docs/PHASE_13.md) and [the browser adapter contract](./docs/API.md#20-phase-13-browser-dashboard-adapter).

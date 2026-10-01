@@ -6,7 +6,10 @@ info:
     Control-plane API derived from docs/API.md. Phase 9 implements authentication,
     scoped projects/tunnels, configured relay metadata and credential issuance in
     PostgreSQL by default (explicit bounded memory mode is available for tests).
-    Durable state and revocation survive API restart. Domains/logs/metrics remain later work.
+    Durable state and revocation survive API restart. Phase 12 implements scoped domains
+    and DNS ownership verification; logs/metrics remain later work. Phase 13 consumes
+    these contracts through a browser dashboard adapter described in API.md; its
+    browser-local routes are outside this control-plane base.
     Database admission/transaction failures return 503 STORAGE_UNAVAILABLE. Phase 11
     requires fresh HEALTHY Redis reports and capacity headroom for relay assignments;
     Redis failure returns 503 PRESENCE_UNAVAILABLE. Relay-scoped report/drain routes

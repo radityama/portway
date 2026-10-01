@@ -414,6 +414,22 @@ Implement pages in this order:
 
 Dashboard should consume the same stable API contract used by CLI tooling.
 
+Phase 13 implements all eight pages against the existing scoped control API. A
+fixed-destination Next.js adapter exchanges a provisioned user key for an expiring
+session in an authenticated encrypted HttpOnly cookie. Exact Origin checks,
+bounded bodies/replies/concurrency, complete deadlines and cancellation protect
+the browser boundary. Session tokens and relay credentials never enter browser
+storage; dashboard reads never allocate generations or connect credentials.
+
+Role-aware forms create projects/tunnels and manage one-time domain proofs,
+verification, activation and disabling. Revocation requires confirmation. Lists
+use signed API cursors; overview counts describe bounded metadata. Relays are
+read-only. Logs reports the API's current 501; settings shows scoped membership
+and logout. Responsive layouts, API outage/restart recovery, CSRF, tenant/viewer
+rules and session tampering are covered by real Chromium/PostgreSQL/DNS tests.
+Traffic metrics, request recording and audit browsing await Phase 14 contracts.
+See [PHASE_13.md](./PHASE_13.md) for verification and operating boundaries.
+
 ## 18. Phase 14 — Observability
 
 Add:

@@ -29,6 +29,7 @@
 - [Phase 10](./PHASE_10.md) — PostgreSQL durability, migrations, safe provisioning and transaction tests
 - [Phase 11](./PHASE_11.md) — live relay reports, capacity selection, operator draining and agent failover
 - [Phase 12](./PHASE_12.md) — DNS ownership proofs, generation-bound custom aliases and certificate renewal
+- [Phase 13](./PHASE_13.md) — scoped browser dashboard, encrypted sessions and real browser verification
 
 ## Contract hierarchy
 

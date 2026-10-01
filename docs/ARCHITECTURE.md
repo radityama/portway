@@ -613,3 +613,21 @@ last valid certificate until expiry. Local tooling issues/renews from a stable
 private development CA; mkcert or an external production issuer can supply PEM.
 CA trust installation, production DNS/ingress and ACME account automation remain
 operator responsibilities. Application bytes continue through the local mux.
+
+## 29. Phase 13 dashboard boundary
+
+Browser → Next.js dashboard → existing control API is a metadata-only path.
+The dashboard exchanges a provisioned user key for an existing ApiSession,
+keeps its bearer encrypted in a host-only HttpOnly cookie and forwards it only to the fixed
+operator-configured API URL. Browser-local session and allowlisted metadata routes
+apply strict Origin checks, bounded bodies/replies/concurrency, deadlines,
+cancellation, no redirects and no caching. They expose no internal relay actions
+or connection credentials. The API still enforces organization/role scope.
+
+Server-rendered pages use the same uncached bounded client. No browser storage,
+URL, logs or rendered page contains an auth bearer; domain proofs are one-time
+form responses. Existing API session persistence/expiry/revocation remains the
+only durable session model. There is no new schema or relay hot-path dependency.
+Overview and relay health use real metadata; logs/metrics remain unavailable when
+the control API reports 501. The agent remains the owner of the fixed local service
+and all public application bytes continue through the relay's local mux.

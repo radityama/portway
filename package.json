@@ -28,15 +28,17 @@
     "test:fleet": "node --test scripts/tests/fleet.integration.mjs",
     "test:fleet-api": "node --test scripts/tests/fleet-api.integration.mjs",
     "test:domains-api": "node --test scripts/tests/domains-api.integration.mjs",
-    "test:domains": "node --test scripts/tests/domains.integration.mjs"
+    "test:domains": "node --test scripts/tests/domains.integration.mjs",
+    "test:dashboard": "node --test scripts/tests/dashboard.integration.mjs"
   },
   "devDependencies": {
-    "@prisma/client": "6.19.3",
     "@eslint/js": "10.0.1",
     "@next/eslint-plugin-next": "15.5.26",
+    "@prisma/client": "6.19.3",
     "@types/node": "24.3.0",
     "eslint": "10.11.0",
     "globals": "17.3.0",
+    "playwright": "1.63.0",
     "prettier": "3.9.9",
     "typescript": "5.9.2",
     "typescript-eslint": "8.71.0"

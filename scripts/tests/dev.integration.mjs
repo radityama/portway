@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { createServer, createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -78,6 +79,45 @@ test(
       assert.equal(dashboard.status, 200);
       assert.match(await dashboard.text(), /Portway/);
       assert.equal(await reachable(Number(env.RELAY_PORT)), true);
+
+      // Verify make dev wires the actual randomized API/origin ports and private
+      // cookie key, rather than accepting an unauthenticated welcome page alone.
+      const dashboardOrigin = `http://127.0.0.1:${env.DASHBOARD_PORT}`;
+      const login = await fetch(dashboardOrigin + '/api/session', {
+        method: 'POST',
+        headers: {
+          Origin: dashboardOrigin,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token: readFileSync(
+            new URL('../../.tmp/dev/api-token', import.meta.url),
+            'utf8',
+          ).trim(),
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      assert.equal(login.status, 200);
+      const cookie = login.headers.get('set-cookie')?.split(';')[0];
+      assert.ok(cookie);
+      const profile = await fetch(dashboardOrigin + '/api/control/me', {
+        headers: { Cookie: cookie },
+        signal: AbortSignal.timeout(30000),
+      });
+      assert.equal(profile.status, 200);
+      assert.equal((await profile.json()).data.organization.id, 'org_local');
+      const logout = await fetch(dashboardOrigin + '/api/session', {
+        method: 'DELETE',
+        headers: {
+          Origin: dashboardOrigin,
+          'Content-Type': 'application/json',
+          Cookie: cookie,
+        },
+        body: '{}',
+        signal: AbortSignal.timeout(30000),
+      });
+      assert.equal(logout.status, 200);
+      assert.equal((await logout.json()).data.revoked, true);
 
       const duplicate = spawnSync(process.execPath, ['scripts/dev.mjs'], {
         cwd: root,

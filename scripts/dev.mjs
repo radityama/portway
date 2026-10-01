@@ -106,6 +106,15 @@ try {
     env: {
       ...process.env,
       PORT: String(ports.DASHBOARD_PORT),
+      DASHBOARD_API_URL:
+        process.env.DASHBOARD_API_URL ??
+        `http://127.0.0.1:${ports.API_PORT}/api/v1`,
+      DASHBOARD_ORIGIN:
+        process.env.DASHBOARD_ORIGIN ??
+        `http://127.0.0.1:${ports.DASHBOARD_PORT}`,
+      DASHBOARD_SESSION_KEY_FILE:
+        process.env.DASHBOARD_SESSION_KEY_FILE ??
+        join(root, '.tmp/dev/dashboard-session-key'),
       NEXT_TELEMETRY_DISABLED: '1',
     },
   });

@@ -16,6 +16,18 @@ export function initializeControl(root, source = process.env) {
   const directory = join(root, '.tmp/dev');
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
+  const dashboardKey = join(directory, 'dashboard-session-key');
+  if (!existsSync(dashboardKey)) {
+    try {
+      writeFileSync(
+        dashboardKey,
+        randomBytes(32).toString('base64url') + '\n',
+        { mode: 0o600, flag: 'wx' },
+      );
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+  }
   const seedPath = join(directory, 'control-seed.json');
   if (existsSync(seedPath)) {
     for (const name of ['api-token', 'relay-api-token'])

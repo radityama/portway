@@ -27,3 +27,12 @@ test('invalid connection URLs fail without including credentials in the error', 
     'rediss://localhost:6379',
   );
 });
+
+test('PostgreSQL is the default storage and memory must be selected explicitly', () => {
+  assert.equal(parseEnvironment({}).storage, 'postgres');
+  assert.equal(parseEnvironment({ API_STORAGE: 'memory' }).storage, 'memory');
+  assert.throws(
+    () => parseEnvironment({ API_STORAGE: 'fallback' }),
+    /API_STORAGE/,
+  );
+});

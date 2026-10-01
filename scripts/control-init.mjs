@@ -10,8 +10,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnvironment } from './environment.mjs';
 
-// Private development provisioning only. Runtime mutations are process-local
-// until Phase 10; this file is never rewritten by the API.
+// Private development provisioning only. Database imports are create-only;
+// this hash-only file is never rewritten by the runtime API.
 export function initializeControl(root, source = process.env) {
   const directory = join(root, '.tmp/dev');
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -55,7 +55,7 @@ export function initializeControl(root, source = process.env) {
     ],
     apiKeys: [
       {
-        id: 'key_local',
+        id: 'key_local_' + hash(apiToken).slice(0, 16),
         userId: 'usr_local',
         organizationId: 'org_local',
         tokenHash: hash(apiToken),

@@ -40,8 +40,8 @@ export type Tunnel = {
   status: TunnelStatus;
   protocol: 'http';
   localHost: string;
-  localPort: number;
-  publicHostname: string;
+  localPort: number | null;
+  publicHostname: string | null;
   relayId: string | null;
   generation: string;
   createdAt: string;

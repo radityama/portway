@@ -36,53 +36,53 @@ enum DomainStatus {
 }
 
 model User {
-  id            String         @id
-  email         String         @unique
-  displayName   String?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  memberships   Membership[]
-  apiKeys       ApiKey[]
-  auditLogs     AuditLog[]
+  id          String       @id
+  email       String       @unique
+  displayName String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  memberships Membership[]
+  apiKeys     ApiKey[]
+  auditLogs   AuditLog[]
 }
 
 model Organization {
-  id            String          @id
-  name          String
-  slug          String          @unique
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  memberships   Membership[]
-  projects      Project[]
-  apiKeys       ApiKey[]
-  auditLogs     AuditLog[]
+  id          String       @id
+  name        String
+  slug        String       @unique
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  memberships Membership[]
+  projects    Project[]
+  apiKeys     ApiKey[]
+  auditLogs   AuditLog[]
 }
 
 model Membership {
-  id             String        @id
+  id             String       @id
   organizationId String
   userId         String
   role           String
-  createdAt      DateTime      @default(now())
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, userId])
   @@index([userId])
 }
 
 model Project {
-  id             String        @id
+  id             String       @id
   organizationId String
   name           String
   slug           String
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   tunnels        Tunnel[]
 
   @@unique([organizationId, slug])
-  @@index([organizationId])
+  @@index([organizationId, id])
 }
 
 model Tunnel {
@@ -97,7 +97,7 @@ model Tunnel {
   localPort       Int?
   publicHostname  String?            @unique
   relayId         String?
-  generation      BigInt             @default(0)
+  generation      Decimal            @default(0) @db.Decimal(20, 0)
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   lastConnectedAt DateTime?
@@ -109,22 +109,29 @@ model Tunnel {
   usageRecords    UsageRecord[]
 
   @@unique([projectId, slug])
-  @@index([projectId])
+  @@index([projectId, id])
   @@index([relayId, status])
   @@index([status])
 }
 
 model TunnelCredential {
-  id         String    @id
+  id         String      @id
   tunnelId   String
-  tokenHash  String
+  tokenHash  String      @unique
   scope      String
-  issuedAt   DateTime  @default(now())
+  issuedAt   DateTime    @default(now())
   expiresAt  DateTime?
   revokedAt  DateTime?
-  tunnel     Tunnel    @relation(fields: [tunnelId], references: [id], onDelete: Cascade)
+  tunnel     Tunnel      @relation(fields: [tunnelId], references: [id], onDelete: Cascade)
+  relayId    String?
+  generation Decimal?    @db.Decimal(20, 0)
+  apiKeyId   String?
+  sessionId  String?
+  relay      Relay?      @relation(fields: [relayId], references: [id], onDelete: Cascade)
+  apiKey     ApiKey?     @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  session    ApiSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
-  @@index([tunnelId])
+  @@index([tunnelId, expiresAt])
   @@index([expiresAt])
 }
 
@@ -143,47 +150,55 @@ model Domain {
 }
 
 model Relay {
-  id          String       @id
+  id          String             @id
   name        String
   region      String
   hostname    String
   port        Int
-  protocol    String       @default("tls")
-  status      RelayStatus  @default(OFFLINE)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  protocol    String             @default("tls")
+  status      RelayStatus        @default(OFFLINE)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
   lastSeenAt  DateTime?
   tunnels     Tunnel[]
+  apiKeys     ApiKey[]
+  credentials TunnelCredential[]
 
   @@index([region, status])
   @@index([status, lastSeenAt])
 }
 
 model ApiKey {
-  id             String        @id
+  id             String              @id
   userId         String?
   organizationId String?
   name           String
-  tokenHash      String
+  tokenHash      String              @unique
   expiresAt      DateTime?
   revokedAt      DateTime?
-  createdAt      DateTime      @default(now())
-  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime            @default(now())
+  user           User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization?       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  relayId        String?
+  relay          Relay?              @relation(fields: [relayId], references: [id], onDelete: Cascade)
+  sessions       ApiSession[]
+  credentials    TunnelCredential[]
+  idempotency    IdempotencyRecord[]
 
+  @@index([relayId])
   @@index([userId])
   @@index([organizationId])
   @@index([expiresAt])
 }
 
 model AccessPolicy {
-  id          String    @id
-  tunnelId    String
-  type        String
-  config      Json
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  tunnel      Tunnel    @relation(fields: [tunnelId], references: [id], onDelete: Cascade)
+  id        String   @id
+  tunnelId  String
+  type      String
+  config    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tunnel    Tunnel   @relation(fields: [tunnelId], references: [id], onDelete: Cascade)
 
   @@index([tunnelId])
 }
@@ -216,4 +231,38 @@ model UsageRecord {
 
   @@unique([tunnelId, windowStart])
   @@index([windowStart])
+}
+
+model ApiSession {
+  id          String              @id
+  tokenHash   String              @unique
+  apiKeyId    String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime            @default(now())
+  apiKey      ApiKey              @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  credentials TunnelCredential[]
+  idempotency IdempotencyRecord[]
+
+  @@index([apiKeyId])
+  @@index([expiresAt])
+}
+
+model IdempotencyRecord {
+  id           String      @id
+  apiKeyId     String
+  sessionId    String?
+  requestHash  String
+  status       Int
+  response     Json?
+  secret       Boolean
+  resourceType String?
+  resourceId   String?
+  createdAt    DateTime    @default(now())
+  expiresAt    DateTime
+  apiKey       ApiKey      @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  session      ApiSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([apiKeyId])
+  @@index([expiresAt])
 }

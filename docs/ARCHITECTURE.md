@@ -557,3 +557,21 @@ revocation yet. Lease refresh uses a new session, cancels interrupted streams, a
 never replays application requests. Persisted client minima prevent generation
 rollback after an API restart with the same seed; lost client state still requires
 the existing explicit recovery override. See API.md and PHASE_9.md.
+
+## 26. Phase 10 persistence boundary
+
+The default API uses PostgreSQL through Prisma with scoped indexed queries and
+bounded interactive transactions. API sessions, credential parent/relay/generation
+bindings, exact uint64 counters, resource policy, idempotency and audits survive
+restart. A shared transaction-scoped advisory lock initially serializes writers
+across API instances; mutation, admission and audit commit together or roll back.
+Provisioning is explicit and create-only; API startup never imports or migrates.
+No database fallback admits policy after a failed commit. Cursor signing and rate
+buckets remain local to each API process.
+
+Relay verification queries durable policy during AUTH only. Admitted sessions
+keep their bounded lease and local registry/mux while the API or database is
+unavailable. Expired sessions must bootstrap again; revoked policy blocks future
+admission across API restarts. Public HTTP/WebSocket/SSE have no database/API query.
+Durable issuance remains CONNECTING metadata; live relay reporting, selection,
+drain coordination and failover are Phase 11. See PHASE_10.md and DATABASE.md.

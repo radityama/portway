@@ -78,9 +78,8 @@ admission, cancellation, supersession and graceful/forced shutdown include
 upgraded connections. Compression, generic upgrades, HTTP/2 and trailers remain
 unsupported. See [PHASE_8.md](./PHASE_8.md).
 
-The next phase is Phase 9: the control-plane API and agent bootstrap integration.
-Durable credential issuance, database migrations, and dashboard features remain
-later work.
+Phases 9–10 add the scoped control API and durable PostgreSQL policy described
+below. The next phase is Phase 11: live relay health, capacity and selection.
 
 ## What this starter contains
 
@@ -95,7 +94,8 @@ later work.
 - registered-session heartbeat and cancellable CLI reconnect with fresh generations
 - negotiated drain completion and deadline-bound agent/relay signal shutdown
 - validated WebSocket upgrades, incremental SSE/chunked HTTP and streaming idle lifetimes
-- control-plane HTTP API scaffold
+- scoped control-plane HTTP API with PostgreSQL persistence and explicit memory mode
+- baseline/additive migrations, safe provisioning and real database integration tests
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification
 - Codex/Claude Code instructions and master prompt
@@ -128,3 +128,16 @@ AUTH verification binds tunnel/relay/generation/expiry; public routing stays
 local. Opt-in CLI bootstrap and lease refresh obtain new credentials and higher
 generations, including recovery after API outage/restart. Durability, dynamic
 relay presence and the dashboard remain later phases. See [PHASE_9.md](./PHASE_9.md).
+
+## Phase 10
+
+PostgreSQL is the default API backend. Checked-in Prisma migrations enforce
+relational, scope, hash, role, port and exact uint64 constraints. Create-only
+hash-only seed import preserves runtime policy. Scoped reads and atomic writes
+persist sessions, projects/tunnels, generation allocations, credential bindings,
+idempotency and audit history. Concurrent API instances share bounded transaction
+admission; no database call enters the public request hot path. Database/API
+outages preserve admitted HTTPS/SSE until lease expiry, and restart retains
+revocations. Cursor keys/rate limits remain process-local, writer serialization is
+an initial throughput boundary, and live relay presence remains Phase 11. See
+[PHASE_10.md](./PHASE_10.md).

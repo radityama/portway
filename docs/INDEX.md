@@ -26,6 +26,7 @@
 - [Phase 7](./PHASE_7.md) — negotiated draining, active work completion, bounded shutdown, and cleanup
 - [Phase 8](./PHASE_8.md) — WebSocket upgrades, SSE and chunked streaming, idle supervision
 - [Phase 9](./PHASE_9.md) — scoped control API, short-lived relay credentials and CLI bootstrap
+- [Phase 10](./PHASE_10.md) — PostgreSQL durability, migrations, safe provisioning and transaction tests
 
 ## Contract hierarchy
 

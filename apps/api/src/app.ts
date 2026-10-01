@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { ControlStore, digest } from './store.ts';
-import type { Principal, TunnelStatus } from './models.ts';
+import { ControlStore } from './store.ts';
+import type { ControlBackend } from './backend.ts';
+import type { Principal } from './models.ts';
 import {
   ApiFailure,
   fields,
@@ -97,7 +98,7 @@ function pagination(values: URLSearchParams) {
   if (!/^[1-9][0-9]{0,2}$/.test(raw) || Number(raw) > 100) invalid();
   return { limit: Number(raw), cursor: values.get('cursor') ?? undefined };
 }
-export function createApp(store = new ControlStore()) {
+export function createApp(store: ControlBackend = new ControlStore()) {
   const app = new Hono<{ Variables: { principal: Principal } }>();
   let active = 0;
   app.use('*', async (c, next) => {
@@ -138,7 +139,7 @@ export function createApp(store = new ControlStore()) {
       await next();
       return;
     }
-    const p = store.authenticate(bearer(c.req.header('Authorization')));
+    const p = await store.authenticate(bearer(c.req.header('Authorization')));
     store.rate('key:' + p.keyHash);
     c.set('principal', p);
     await next();
@@ -146,10 +147,10 @@ export function createApp(store = new ControlStore()) {
   app.get('/health', (c) =>
     c.json({ data: { status: 'ok' }, error: null, meta: {} }),
   );
-  app.get('/ready', (c) =>
-    store.ready()
+  app.get('/ready', async (c) =>
+    (await store.ready())
       ? c.json({
-          data: { status: 'ready', storage: 'memory' },
+          data: { status: 'ready', storage: store.storage },
           error: null,
           meta: {},
         })
@@ -170,14 +171,14 @@ export function createApp(store = new ControlStore()) {
     const b = await body(c.req.raw);
     fields(b.value, ['token']);
     const rawToken = token(b.value.token);
-    const p = store.authenticate(rawToken);
-    const result = store.mutation(
+    const p = await store.authenticate(rawToken);
+    const result = await store.mutation(
       p,
       'POST',
       c.req.path,
       b.raw,
       c.req.header('Idempotency-Key'),
-      () => ({ status: 200, data: store.login(rawToken) }),
+      async () => ({ status: 200, data: await store.login(rawToken) }),
       true,
     );
     return c.json({ data: result.data, error: null, meta: {} });
@@ -186,67 +187,58 @@ export function createApp(store = new ControlStore()) {
     query(c.req.url, []);
     const b = await body(c.req.raw, true);
     fields(b.value, []);
-    store.logout(c.get('principal'));
+    await store.logout(c.get('principal'));
     return c.body(null, 204);
   });
-  app.get('/api/v1/me', (c) => {
+  app.get('/api/v1/me', async (c) => {
     query(c.req.url, []);
-    const p = c.get('principal');
-    store.recheck(p);
     return c.json({
-      data: {
-        user: store.users.get(p.userId),
-        organization: store.organizations.get(p.organizationId),
-        role: p.role,
-      },
+      data: await store.profile(c.get('principal')),
       error: null,
       meta: {},
     });
   });
-  app.get('/api/v1/projects', (c) => {
+  app.get('/api/v1/projects', async (c) => {
     const q = query(c.req.url, ['cursor', 'limit']);
-    const page = pagination(q);
-    const p = c.get('principal');
-    const result = store.page(
-      p,
-      'projects',
-      [...store.projects.values()].filter(
-        (v) => v.organizationId === p.organizationId,
-      ),
-      page.cursor,
-      page.limit,
-      '',
+    const p = pagination(q);
+    const page = await store.listProjects(
+      c.get('principal'),
+      p.cursor,
+      p.limit,
     );
     return c.json({
-      data: { projects: result.items },
+      data: { projects: page.items },
       error: null,
-      meta: { nextCursor: result.nextCursor },
+      meta: { nextCursor: page.nextCursor },
     });
   });
   app.post('/api/v1/projects', async (c) => {
     query(c.req.url, []);
     const b = await body(c.req.raw);
     const p = c.get('principal');
-    store.mutate(p);
+    await store.mutate(p);
     fields(b.value, ['name', 'slug']);
-    const result = store.mutation(
+    const result = await store.mutation(
       p,
       'POST',
       c.req.path,
       b.raw,
       c.req.header('Idempotency-Key'),
-      () => ({ status: 201, data: store.createProject(p, b.value) }),
+      async () => ({
+        status: 201,
+        data: await store.createProject(p, b.value),
+      }),
     );
     return c.json(
       { data: result.data, error: null, meta: {} },
       result.status as ContentfulStatusCode,
     );
   });
-  app.get('/api/v1/projects/:id', (c) => {
+  app.get('/api/v1/projects/:id', async (c) => {
     query(c.req.url, []);
     return c.json({
       data: {
-        project: store.project(c.get('principal'), id(c.req.param('id'))),
+        project: await store.project(c.get('principal'), id(c.req.param('id'))),
       },
       error: null,
       meta: {},
@@ -254,19 +246,19 @@ export function createApp(store = new ControlStore()) {
   });
   app.delete('/api/v1/projects/:id', async (c) => {
     query(c.req.url, []);
-    const p = c.get('principal');
-    const projectId = id(c.req.param('id'));
-    store.mutate(p, true);
+    const p = c.get('principal'),
+      projectId = id(c.req.param('id'));
+    await store.mutate(p, true);
     const b = await body(c.req.raw, true);
     fields(b.value, []);
-    store.mutation(
+    await store.mutation(
       p,
       'DELETE',
       c.req.path,
       b.raw,
       c.req.header('Idempotency-Key'),
-      () => {
-        store.deleteProject(p, projectId);
+      async () => {
+        await store.deleteProject(p, projectId);
         return { status: 204, data: null };
       },
       false,
@@ -274,21 +266,20 @@ export function createApp(store = new ControlStore()) {
     );
     return c.body(null, 204);
   });
-  app.get('/api/v1/tunnels', (c) => {
+  app.get('/api/v1/tunnels', async (c) => {
     const q = query(c.req.url, [
-      'cursor',
-      'limit',
-      'projectId',
-      'status',
-      'relayId',
-    ]);
-    const page = pagination(q);
-    const p = c.get('principal');
-    const projectId = q.get('projectId');
-    if (projectId !== null) store.project(p, id(projectId));
-    const relayId = q.get('relayId');
+        'cursor',
+        'limit',
+        'projectId',
+        'status',
+        'relayId',
+      ]),
+      page = pagination(q),
+      projectId = q.get('projectId'),
+      relayId = q.get('relayId'),
+      status = q.get('status');
+    if (projectId !== null) id(projectId);
     if (relayId !== null) id(relayId);
-    const status = q.get('status');
     if (
       status !== null &&
       ![
@@ -301,20 +292,11 @@ export function createApp(store = new ControlStore()) {
       ].includes(status)
     )
       invalid();
-    const values = [...store.tunnels.values()].filter(
-      (t) =>
-        store.projects.get(t.projectId)?.organizationId === p.organizationId &&
-        (projectId === null || t.projectId === projectId) &&
-        (relayId === null || t.relayId === relayId) &&
-        (status === null || t.status === (status as TunnelStatus)),
-    );
-    const result = store.page(
-      p,
-      'tunnels',
-      values,
+    const result = await store.listTunnels(
+      c.get('principal'),
+      { projectId, relayId, status },
       page.cursor,
       page.limit,
-      JSON.stringify([projectId, status, relayId]),
     );
     return c.json({
       data: { tunnels: result.items },
@@ -324,28 +306,29 @@ export function createApp(store = new ControlStore()) {
   });
   app.post('/api/v1/tunnels', async (c) => {
     query(c.req.url, []);
-    const b = await body(c.req.raw);
-    const p = c.get('principal');
-    // Access checks precede idempotency replay as well as a new mutation.
-    store.project(p, id(b.value.projectId));
-    store.mutate(p);
-    const result = store.mutation(
+    const b = await body(c.req.raw),
+      p = c.get('principal');
+    await store.project(p, id(b.value.projectId));
+    await store.mutate(p);
+    const result = await store.mutation(
       p,
       'POST',
       c.req.path,
       b.raw,
       c.req.header('Idempotency-Key'),
-      () => ({ status: 201, data: store.createTunnel(p, b.value) }),
+      async () => ({ status: 201, data: await store.createTunnel(p, b.value) }),
     );
     return c.json(
       { data: result.data, error: null, meta: {} },
       result.status as ContentfulStatusCode,
     );
   });
-  app.get('/api/v1/tunnels/:id', (c) => {
+  app.get('/api/v1/tunnels/:id', async (c) => {
     query(c.req.url, []);
     return c.json({
-      data: { tunnel: store.tunnel(c.get('principal'), id(c.req.param('id'))) },
+      data: {
+        tunnel: await store.tunnel(c.get('principal'), id(c.req.param('id'))),
+      },
       error: null,
       meta: {},
     });
@@ -355,20 +338,20 @@ export function createApp(store = new ControlStore()) {
       c: Context<{ Variables: { principal: Principal } }>,
     ) => {
       query(c.req.url, []);
-      const p = c.get('principal');
-      const tunnelId = id(c.req.param('id'));
-      store.tunnel(p, tunnelId);
-      store.mutate(p);
+      const p = c.get('principal'),
+        tunnelId = id(c.req.param('id'));
+      await store.tunnel(p, tunnelId);
+      await store.mutate(p);
       const b = await body(c.req.raw, true);
       fields(b.value, []);
-      const result = store.mutation(
+      const result = await store.mutation(
         p,
         c.req.method,
         c.req.path,
         b.raw,
         c.req.header('Idempotency-Key'),
-        () => {
-          const data = store.revoke(p, tunnelId);
+        async () => {
+          const data = await store.revoke(p, tunnelId);
           return {
             status: suffix === '' ? 204 : 200,
             data: suffix === '' ? null : data,
@@ -390,33 +373,32 @@ export function createApp(store = new ControlStore()) {
     fields(b.value, ['minimumGeneration']);
     if (b.value.minimumGeneration !== undefined)
       generation(b.value.minimumGeneration);
-    const p = c.get('principal');
-    const tunnelId = id(c.req.param('id'));
-    store.tunnel(p, tunnelId);
-    store.mutate(p);
-    const result = store.mutation(
+    const p = c.get('principal'),
+      tunnelId = id(c.req.param('id'));
+    await store.tunnel(p, tunnelId);
+    await store.mutate(p);
+    const result = await store.mutation(
       p,
       'POST',
       c.req.path,
       b.raw,
       c.req.header('Idempotency-Key'),
-      () => ({ status: 200, data: store.connect(p, tunnelId, b.value) }),
+      async () => ({
+        status: 200,
+        data: await store.connect(p, tunnelId, b.value),
+      }),
       true,
       tunnelId,
     );
     return c.json({ data: result.data, error: null, meta: {} });
   });
-  app.get('/api/v1/relays', (c) => {
-    const q = query(c.req.url, ['cursor', 'limit']);
-    const page = pagination(q);
-    const p = c.get('principal');
-    const result = store.page(
-      p,
-      'relays',
-      [...store.relays.values()],
+  app.get('/api/v1/relays', async (c) => {
+    const q = query(c.req.url, ['cursor', 'limit']),
+      page = pagination(q);
+    const result = await store.listRelays(
+      c.get('principal'),
       page.cursor,
       page.limit,
-      '',
     );
     return c.json({
       data: { relays: result.items },
@@ -424,11 +406,11 @@ export function createApp(store = new ControlStore()) {
       meta: { nextCursor: result.nextCursor },
     });
   });
-  app.get('/api/v1/relays/:id', (c) => {
+  app.get('/api/v1/relays/:id', async (c) => {
     query(c.req.url, []);
-    store.recheck(c.get('principal'));
+    await store.recheck(c.get('principal'));
     return c.json({
-      data: { relay: store.relay(id(c.req.param('id'))) },
+      data: { relay: await store.relay(id(c.req.param('id'))) },
       error: null,
       meta: {},
     });
@@ -436,12 +418,11 @@ export function createApp(store = new ControlStore()) {
   app.post('/api/v1/internal/credentials/verify', async (c) => {
     query(c.req.url, []);
     const relayToken = bearer(c.req.header('Authorization'));
-    if (!store.relayKeys.has(digest(relayToken)))
-      throw new ApiFailure(401, 'AUTH_INVALID', 'Relay authentication failed');
+    await store.relayAccess(relayToken);
     const b = await body(c.req.raw);
     fields(b.value, ['relayId', 'tokenHash']);
     return c.json({
-      data: store.verify(
+      data: await store.verify(
         relayToken,
         id(b.value.relayId),
         hash(b.value.tokenHash),
@@ -456,9 +437,9 @@ export function createApp(store = new ControlStore()) {
     '/api/v1/tunnels/:id/logs',
     '/api/v1/tunnels/:id/metrics',
   ])
-    app.all(path, (c) => {
+    app.all(path, async (c) => {
       if (path.includes(':id'))
-        store.tunnel(c.get('principal'), id(c.req.param('id')));
+        await store.tunnel(c.get('principal'), id(c.req.param('id')));
       throw new ApiFailure(
         501,
         'NOT_IMPLEMENTED',
@@ -475,24 +456,24 @@ export function createApp(store = new ControlStore()) {
       404,
     ),
   );
-  app.onError((error, c) => {
-    if (error instanceof ApiFailure)
-      return c.json(
-        {
-          data: null,
-          error: { code: error.code, message: error.message },
-          meta: {},
-        },
-        error.status,
-      );
-    return c.json(
-      {
-        data: null,
-        error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
-        meta: {},
-      },
-      500,
-    );
-  });
+  app.onError((error, c) =>
+    error instanceof ApiFailure
+      ? c.json(
+          {
+            data: null,
+            error: { code: error.code, message: error.message },
+            meta: {},
+          },
+          error.status,
+        )
+      : c.json(
+          {
+            data: null,
+            error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
+            meta: {},
+          },
+          500,
+        ),
+  );
   return app;
 }

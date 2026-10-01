@@ -45,4 +45,6 @@ jobs:
       - run: pnpm db:generate
       - run: make build
       - run: pnpm test:control
+      - run: pnpm test:database
+      - run: pnpm test:database-control
       - run: pnpm test:bootstrap

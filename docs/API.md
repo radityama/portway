@@ -514,7 +514,10 @@ keys cannot access user endpoints. Verification runs only during AUTH and is
 bounded by the relay handshake deadline. There is no successful-auth cache or
 public-request API call. Revocation prevents future AUTH; admitted sessions keep
 their bounded lease until expiry, transport failure or shutdown. Active push
-revocation/distributed presence remain later work.
+revocation/distributed presence remain later work. From Phase 10, a credential's
+relay/generation must also match the latest durable assignment. Superseded leases
+return AUTH_REVOKED on future AUTH, including after relay/API restarts; already
+admitted sessions retain their local lease until replacement or expiry.
 
 ### Agent API bootstrap
 
@@ -543,3 +546,34 @@ including `register --once` for development readiness. `connect` remains a direc
 TLS/authentication diagnostic. Expired hash records can be reclaimed: a known
 expired credential returns `AUTH_EXPIRED`, while a reclaimed/unknown hash returns
 `AUTH_INVALID`. Both reject authentication.
+
+## 17. Phase 10 persistence contract
+
+`API_STORAGE=postgres` is the default runtime backend and requires DATABASE_URL
+and deployed Prisma migrations. The API never silently falls back to memory.
+`API_STORAGE=memory` explicitly selects Phase 9 behavior for isolated tests or
+local development. `/health` is process liveness; `/ready` checks backend access
+and usable user/relay policy and reports `storage: postgres` or `memory`.
+
+Projects, tunnels, configured relays, API keys, sessions, credential bindings,
+revocation, generation reservations, idempotency and audit records survive API
+restart in PostgreSQL. Existing REST shapes, tenant/role rules, canonical uint64
+string generations, one-time secrets and credential lease TTLs are unchanged. Superseded generation
+credentials fail future authentication against durable assignment policy.
+Cursor signing and IP/user-key rate limiting remain bounded process-local state;
+cursors may become invalid after restart and rate quotas are not fleet-wide yet.
+
+Successful writes commit metadata, credential/generation changes, idempotency and
+audit together. Concurrent API instances serialize mutation admission and replay
+through a transaction-scoped database lock. A lock/statement/connection/transaction
+failure returns 503 STORAGE_UNAVAILABLE with no partial mutation or secrets in the
+error. Expired sessions/credentials/idempotency records may be reclaimed; unknown
+reclaimed hashes still fail authentication. Resource reads use scoped bounded
+keyset queries. Metadata on historical unbound credential rows grants no AUTH.
+
+Provisioning uses an explicit transactional create-only `db:seed` import of the
+private API_SEED_FILE. Runtime never reloads provisioning over durable policy.
+Rerunning the seed does not undo revocation, overwrite generations or resurrect
+terminal tunnels. Database migration and seeding happen before development API
+startup. Public HTTP/WebSocket/SSE continue using the relay's existing local lease
+and are independent of database availability until expiry/failure/shutdown.

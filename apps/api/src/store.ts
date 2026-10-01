@@ -1,3 +1,4 @@
+import type { Awaitable, MutationResult, TunnelFilters } from './backend.ts';
 import { isIP } from 'node:net';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type {
@@ -33,9 +34,9 @@ import {
 
 export const digest = (value: string) =>
   createHash('sha256').update(value).digest('hex');
-const opaque = (prefix: string) =>
+export const opaque = (prefix: string) =>
   `${prefix}_${randomBytes(16).toString('hex')}`;
-const secret = () => randomBytes(32).toString('base64url');
+export const secret = () => randomBytes(32).toString('base64url');
 const emptySeed: Seed = {
   users: [],
   organizations: [],
@@ -70,6 +71,9 @@ export type Audit = {
 };
 
 export class ControlStore {
+  readonly storage = 'memory' as const;
+  private pending = Promise.resolve();
+  private waiting = 0;
   readonly users = new Map<string, User>();
   readonly organizations = new Map<string, Organization>();
   readonly memberships: Membership[] = [];
@@ -310,6 +314,62 @@ export class ControlStore {
     if (map.has(key)) invalid();
     this.capacity(map.size, this.limits.resources);
     map.set(key, value);
+  }
+  profile(p: Principal) {
+    this.recheck(p);
+    return {
+      user: this.users.get(p.userId)!,
+      organization: this.organizations.get(p.organizationId)!,
+      role: p.role,
+    };
+  }
+  relayAccess(bearer: string) {
+    const key = this.relayKeys.get(digest(bearer));
+    if (!key)
+      throw new ApiFailure(401, 'AUTH_INVALID', 'Relay authentication failed');
+    if (key.revokedAt)
+      throw new ApiFailure(401, 'AUTH_REVOKED', 'Relay authentication revoked');
+    if (timestamp(key.expiresAt) <= this.now())
+      throw new ApiFailure(401, 'AUTH_EXPIRED', 'Relay authentication expired');
+  }
+  listProjects(p: Principal, cursor: string | undefined, limit: number) {
+    return this.page(
+      p,
+      'projects',
+      [...this.projects.values()].filter(
+        (v) => v.organizationId === p.organizationId,
+      ),
+      cursor,
+      limit,
+      '',
+    );
+  }
+  listRelays(p: Principal, cursor: string | undefined, limit: number) {
+    return this.page(p, 'relays', [...this.relays.values()], cursor, limit, '');
+  }
+  listTunnels(
+    p: Principal,
+    filters: TunnelFilters,
+    cursor: string | undefined,
+    limit: number,
+  ) {
+    const { projectId, relayId, status } = filters;
+    if (projectId !== null) this.project(p, projectId);
+    const values = [...this.tunnels.values()].filter(
+      (t) =>
+        this.projects.get(t.projectId)?.organizationId === p.organizationId &&
+        (projectId === null || t.projectId === projectId) &&
+        (relayId === null || t.relayId === relayId) &&
+        (status === null || t.status === status),
+    );
+    return this.page(
+      p,
+      'tunnels',
+      values,
+      cursor,
+      limit,
+      JSON.stringify([projectId, status, relayId]),
+    );
   }
   ready() {
     const now = this.now();
@@ -637,7 +697,7 @@ export class ControlStore {
         token: raw,
       },
       generation: cred.generation,
-      publicHostname: tunnel.publicHostname,
+      publicHostname: tunnel.publicHostname!,
     };
   }
   verify(relayBearer: string, relayId: string, tokenHash: string) {
@@ -661,6 +721,8 @@ export class ControlStore {
     if (
       !tunnel ||
       tunnel.status === 'REVOKED' ||
+      tunnel.generation !== cred.generation ||
+      tunnel.relayId !== cred.relayId ||
       cred.revokedAt ||
       !parent ||
       parent.revokedAt ||
@@ -718,68 +780,81 @@ export class ControlStore {
     this.capacity(this.buckets.size, this.limits.buckets);
     this.buckets.set(key, { start: now, count: 1 });
   }
-  mutation(
+  async mutation(
     p: Principal,
     method: string,
     path: string,
     raw: string,
     key: string | undefined,
-    operation: () => { status: number; data: unknown },
+    operation: () => Awaitable<MutationResult>,
     secretResult = false,
     resource?: string,
   ) {
-    this.recheck(p);
-    if (
-      key !== undefined &&
-      !/^[!#$%&'*+\-.^_\x60|~A-Za-z0-9]{8,255}$/.test(key)
-    )
-      invalid();
-    this.sweep();
-    const identifier =
-      key === undefined
-        ? ''
-        : `${p.keyHash}:${p.sessionHash ?? ''}:${method}:${path}:${key}`;
-    const fingerprint = digest(raw);
-    const prior = identifier ? this.idempotency.get(identifier) : undefined;
-    if (prior) {
-      if (prior.fingerprint !== fingerprint)
-        throw new ApiFailure(
-          409,
-          'IDEMPOTENCY_CONFLICT',
-          'Idempotency key already used',
-        );
-      if (prior.resource?.startsWith('tnl_')) {
-        const tunnel = this.tunnel(p, prior.resource);
-        if (tunnel.status === 'REVOKED' && path.endsWith('/connect'))
-          throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
-      } else if (prior.resource?.startsWith('prj_') && method !== 'DELETE')
-        this.project(p, prior.resource);
-      if (prior.secret)
-        throw new ApiFailure(
-          409,
-          'CREDENTIAL_ALREADY_ISSUED',
-          'Credential already issued; use a new idempotency key',
-        );
-      return { status: prior.status, data: structuredClone(prior.data) };
+    if (this.waiting >= 128) this.capacity(128, 128);
+    this.waiting++;
+    const priorOperation = this.pending;
+    let release!: () => void;
+    this.pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await priorOperation;
+    try {
+      this.recheck(p);
+      if (
+        key !== undefined &&
+        !/^[!#$%&'*+\-.^_\x60|~A-Za-z0-9]{8,255}$/.test(key)
+      )
+        invalid();
+      this.sweep();
+      const identifier =
+        key === undefined
+          ? ''
+          : `${p.keyHash}:${p.sessionHash ?? ''}:${method}:${path}:${key}`;
+      const fingerprint = digest(raw);
+      const prior = identifier ? this.idempotency.get(identifier) : undefined;
+      if (prior) {
+        if (prior.fingerprint !== fingerprint)
+          throw new ApiFailure(
+            409,
+            'IDEMPOTENCY_CONFLICT',
+            'Idempotency key already used',
+          );
+        if (prior.resource?.startsWith('tnl_')) {
+          const tunnel = this.tunnel(p, prior.resource);
+          if (tunnel.status === 'REVOKED' && path.endsWith('/connect'))
+            throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+        } else if (prior.resource?.startsWith('prj_') && method !== 'DELETE')
+          this.project(p, prior.resource);
+        if (prior.secret)
+          throw new ApiFailure(
+            409,
+            'CREDENTIAL_ALREADY_ISSUED',
+            'Credential already issued; use a new idempotency key',
+          );
+        return { status: prior.status, data: structuredClone(prior.data) };
+      }
+      if (identifier)
+        this.capacity(this.idempotency.size, this.limits.idempotency);
+      const result = await operation();
+      const resultData = result.data as {
+        project?: { id: string };
+        tunnel?: { id: string };
+      } | null;
+      resource = resource ?? resultData?.project?.id ?? resultData?.tunnel?.id;
+      if (identifier)
+        this.idempotency.set(identifier, {
+          fingerprint,
+          expiresAt: this.now() + 600_000,
+          status: result.status,
+          data: secretResult ? null : structuredClone(result.data),
+          secret: secretResult,
+          ...(resource ? { resource } : {}),
+        });
+      return result;
+    } finally {
+      this.waiting--;
+      release();
     }
-    if (identifier)
-      this.capacity(this.idempotency.size, this.limits.idempotency);
-    const result = operation();
-    const resultData = result.data as {
-      project?: { id: string };
-      tunnel?: { id: string };
-    } | null;
-    resource = resource ?? resultData?.project?.id ?? resultData?.tunnel?.id;
-    if (identifier)
-      this.idempotency.set(identifier, {
-        fingerprint,
-        expiresAt: this.now() + 600_000,
-        status: result.status,
-        data: secretResult ? null : structuredClone(result.data),
-        secret: secretResult,
-        ...(resource ? { resource } : {}),
-      });
-    return result;
   }
   page<T extends { id: string }>(
     p: Principal,

@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–9 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. Control state is bounded and in memory until Phase 10. The dashboard remains a skeleton.
+Phases 0–10 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. The dashboard remains a skeleton.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ make dev
 
 `make setup` creates `.env` if missing, installs dependencies from the lockfile, generates the Prisma client, and creates local TLS/credential files in ignored `.tmp/dev`. It also creates a separate public CA and wildcard certificate, preserving existing agent credentials. Existing environment and credential files are preserved. Shell variables take precedence.
 
-`make dev` waits for healthy PostgreSQL and Redis, builds the agent/relay, and starts the API, dashboard, and relay. Readiness requires API/dashboard checks, an actual authenticated TLS handshake and tunnel registration, and verified public HTTPS.
+`make dev` waits for healthy PostgreSQL and Redis, deploys checked-in migrations and imports the hash-only control seed, builds the agent/relay, and starts the API, dashboard, and relay. Readiness requires API/dashboard checks, an actual authenticated TLS handshake and tunnel registration, and verified public HTTPS.
 
 Default addresses:
 
@@ -95,8 +95,8 @@ must match `PORTWAY_TUNNEL_ID`. The relay assigns stable hostnames under
 `PUBLIC_BASE_DOMAIN` (default `portway.localhost`); peers cannot choose hosts.
 Generation counters persist per tunnel in private `PORTWAY_STATE_DIR` (default
 `.tmp/agent-state`). Failed attempts consume numbers. Keep this directory across
-starts; two machines sharing a tunnel need coordinated generations until later
-control-plane work. Run one agent per tunnel. An explicit `PORTWAY_GENERATION` recovery override
+starts; direct-file mode requires coordinated generations across machines, while API mode
+allocates generations transactionally in PostgreSQL. Run one agent per tunnel. An explicit `PORTWAY_GENERATION` recovery override
 must exceed the relay watermark and the local counter, and is persisted locally.
 The override applies to the first reservation in each CLI run; automatic reconnect increments from it. Remove it before the next manual start.
 
@@ -141,13 +141,13 @@ pnpm db:validate
 pnpm test:bootstrap
 ```
 
-`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, and production builds. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, stream/window payloads, and WebSocket response headers for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
+`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, production builds, and real API/CLI/relay tests in memory and PostgreSQL modes. PostgreSQL integration uses isolated temporary Docker containers to verify migrations, constraints, concurrent writes, rollback, seed safety and outage isolation. Docker must be available. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, stream/window payloads, and WebSocket response headers for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
 
 Stop the development stack before running production builds; Next.js uses the same `.next/` directory for both.
 
 Use `make fmt` to apply formatting. `make doctor` checks development tooling; this is separate from the future `portway doctor` product command.
 
-Build outputs are `bin/portway`, `bin/portway-relay`, API/shared-package `dist/` directories, and the dashboard `.next/` directory. `make docker-up` and `make docker-down` manage just the development dependencies. Database migrations, full data-plane integration tests, and load tests remain scheduled in later phases.
+Build outputs are `bin/portway`, `bin/portway-relay`, API/shared-package `dist/` directories, and the dashboard `.next/` directory. `make docker-up` and `make docker-down` manage just the development dependencies. Checked-in migrations and database integration tests are implemented; broader fleet/load testing remains later work.
 
 ## Repository and contracts
 
@@ -165,14 +165,15 @@ The agent connects outbound to the relay. Public application bytes stay in the d
 
 The source-of-truth hierarchy is PRD → architecture → database/API/routing contracts → implementation. `docs/DATABASE.md` defines the logical data model; `prisma/schema.prisma` represents it. `docs/API.md` defines REST semantics; `docs/openapi.yaml` represents them. See the [documentation index](./docs/INDEX.md).
 
-## Control-plane development (Phase 9)
+## Control-plane development (Phases 9–10)
 
 `make setup` also creates private `.tmp/dev/api-token`, `relay-api-token`, and
 `control-seed.json`. The seed contains hashes and a local organization, project,
 `tnl_local_dev` tunnel and configured relay. Development API/relay keys expire
 after seven days. Setup preserves them; to reprovision after expiry, stop services,
-move those three control files aside, and rerun setup. Relay metadata in an
-existing seed is preserved: update its port if you change `RELAY_PORT`.
+move those three control files aside, and rerun setup. Existing database policy is preserved by seed reruns. If you change `RELAY_PORT`,
+update both the seed and the provisioned relay row; seed import does not overwrite
+operator changes. Rotated control keys receive new IDs and do not revive revoked keys.
 
 Enable API credential issuance and verification in the same shell:
 
@@ -199,9 +200,31 @@ credential with a higher generation. Existing sessions serve public traffic
 during API outages until their lease expires. Revocation blocks future
 authentication; it does not push a close to an already admitted session.
 
-API changes are process-local and disappear on restart. `CONNECTING` represents
-assignment issuance, not confirmed live presence. Database durability is Phase 10;
-dynamic relay health/selection and failover are Phase 11. `pnpm test:control`
-verifies real API/CLI/relay bootstrap, HTTPS/SSE under API outage, expiry, API
-restart recovery and revocation after `make build`. See [Phase 9](./docs/PHASE_9.md)
-for the contract, verification and boundaries.
+`API_STORAGE=postgres` is the default and requires `DATABASE_URL`. Before starting
+a standalone API, explicitly provision the database:
+
+```bash
+pnpm db:deploy
+pnpm db:seed
+```
+
+`db:seed` reads the hash-only `API_SEED_FILE`; migrations and imports never run
+inside API startup. Imports create missing rows in one transaction and preserve
+existing generations, roles, revocations and audit history. In production, provide
+operator-owned identities and hashed keys instead of development seed policy.
+Existing databases created outside Prisma migrations must be inspected and
+baselined before deployment; the scripts never reset or drop their tables.
+
+Sessions, metadata, generation allocation, credential bindings, idempotency and
+revocations survive API restarts. Database failures return `503 STORAGE_UNAVAILABLE`;
+`/health` reports process liveness and `/ready` requires usable database policy.
+Admitted public traffic continues until its lease expires even during database
+outages. Rate buckets and cursor signing keys remain process-local; cursors expire
+on API restart and cannot move between instances. `CONNECTING` represents issuance,
+not confirmed live presence. Dynamic relay health/selection and failover are Phase 11.
+
+Explicit `API_STORAGE=memory` retains the bounded Phase 9 test/development backend;
+its mutations disappear on restart. `pnpm test:control` exercises that backend.
+`pnpm test:database` checks PostgreSQL contracts, and `pnpm test:database-control`
+tests actual API/CLI/relay restart, database outage isolation and durable revocation
+after `make build`. See [Phase 10](./docs/PHASE_10.md) for verification and boundaries.

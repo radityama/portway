@@ -339,6 +339,16 @@ Implement migrations and seed data.
 
 Verify indexes and transactions with integration tests.
 
+Phase 10 implements checked-in baseline/additive migrations, create-only hash-only
+provisioning and a default PostgreSQL backend. Scoped queries and keyset indexes
+avoid whole-table hydration; sessions, generations, credential policy, metadata
+idempotency and audit writes are durable. Bounded interactive transactions use a
+shared advisory writer lock for cross-instance admission and atomic allocation.
+Integration verifies rollback, exact uint64 storage, concurrent retries, capacity,
+restart persistence and database outage isolation with the actual API/CLI/relay.
+Explicit memory mode remains for tests/development. Dynamic relay presence and
+selection remain Phase 11. See [PHASE_10.md](./PHASE_10.md).
+
 ## 15. Phase 11 — Multi-Relay
 
 Implement:

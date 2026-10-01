@@ -27,6 +27,9 @@ export function parseEnvironment(source: NodeJS.ProcessEnv) {
     }
   }
 
+  const storage = source.API_STORAGE ?? 'postgres';
+  if (storage !== 'postgres' && storage !== 'memory')
+    throw new Error('API_STORAGE must be postgres or memory');
   const baseDomain = source.PUBLIC_BASE_DOMAIN ?? 'portway.localhost';
   if (
     baseDomain.length > 218 ||
@@ -51,6 +54,7 @@ export function parseEnvironment(source: NodeJS.ProcessEnv) {
     source.API_SEED_FILE ?? (existsSync(defaultSeed) ? defaultSeed : '');
   return {
     apiPort,
+    storage,
     seedFile: configuredSeed ? resolve(root, configuredSeed) : '',
     credentialTTL: credentialTTL * 1000,
     databaseUrl: source.DATABASE_URL ?? '',

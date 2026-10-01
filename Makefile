@@ -1,4 +1,4 @@
-.PHONY: setup dev dev-credentials doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check control-integration integration e2e load-test
+.PHONY: setup dev dev-credentials doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check control-integration database-integration integration e2e load-test
 
 FUZZTIME ?= 10s
 
@@ -56,10 +56,14 @@ build:
 	go build -o bin/portway-relay ./cmd/relay
 	pnpm build
 
-check: fmt-check test test-race lint typecheck build control-integration
+check: fmt-check test test-race lint typecheck build control-integration database-integration
 
 control-integration: build
 	pnpm test:control
+
+database-integration: build
+	pnpm test:database
+	pnpm test:database-control
 
 integration:
 	go test ./tests/integration/...

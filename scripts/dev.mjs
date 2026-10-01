@@ -64,6 +64,11 @@ try {
     { cwd: root },
   );
   controller.signal.throwIfAborted();
+  if ((process.env.API_STORAGE ?? 'postgres') === 'postgres') {
+    await supervisor.run('pnpm', ['db:deploy'], { cwd: root });
+    await supervisor.run('pnpm', ['db:seed'], { cwd: root });
+  }
+  controller.signal.throwIfAborted();
   await mkdir(join(root, '.tmp'), { recursive: true });
   const relayPath = join(
     root,
@@ -140,12 +145,12 @@ async function waitUntilReady(ports, agentPath, signal) {
     try {
       const timeout = AbortSignal.any([signal, AbortSignal.timeout(2_000)]);
       const [api, dashboard] = await Promise.all([
-        fetch(`http://127.0.0.1:${ports.API_PORT}/health`, { signal: timeout }),
+        fetch(`http://127.0.0.1:${ports.API_PORT}/ready`, { signal: timeout }),
         fetch(`http://127.0.0.1:${ports.DASHBOARD_PORT}`, { signal: timeout }),
       ]);
       const health = await api.json();
       await dashboard.body?.cancel();
-      if (api.ok && health.data?.status === 'ok' && dashboard.ok) {
+      if (api.ok && health.data?.status === 'ready' && dashboard.ok) {
         await probeRelay(ports.RELAY_PORT, agentPath, signal);
         await probeHTTPS(ports.PUBLIC_PORT, signal);
         return;

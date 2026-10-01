@@ -71,6 +71,9 @@ test(
         error: null,
         meta: {},
       });
+      const ready = await fetch(`http://127.0.0.1:${env.API_PORT}/ready`);
+      assert.equal(ready.status, 200);
+      assert.equal((await ready.json()).data.storage, 'postgres');
       const dashboard = await fetch(`http://127.0.0.1:${env.DASHBOARD_PORT}`);
       assert.equal(dashboard.status, 200);
       assert.match(await dashboard.text(), /Portway/);

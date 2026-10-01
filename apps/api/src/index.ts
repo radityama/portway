@@ -4,16 +4,23 @@ import { createApp } from './app.ts';
 import { env } from './env.ts';
 import { ControlStore } from './store.ts';
 import { loadSeed } from './seed.ts';
+import { Database, databaseClient } from './database.ts';
+import { PrismaStore } from './prisma-store.ts';
 
 let app: ReturnType<typeof createApp>;
+let database: Database | undefined;
 try {
-  app = createApp(
-    new ControlStore({
-      seed: loadSeed(env.seedFile),
-      baseDomain: env.publicBaseDomain,
-      credentialTTL: env.credentialTTL,
-    }),
-  );
+  const options = {
+    baseDomain: env.publicBaseDomain,
+    credentialTTL: env.credentialTTL,
+  };
+  if (env.storage === 'postgres') {
+    database = new Database(databaseClient(env.databaseUrl));
+    app = createApp(new PrismaStore(database, options));
+  } else
+    app = createApp(
+      new ControlStore({ ...options, seed: loadSeed(env.seedFile) }),
+    );
 } catch {
   console.error(JSON.stringify({ event: 'api_configuration_failed' }));
   process.exit(1);
@@ -40,8 +47,15 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     const deadline = setTimeout(() => process.exit(1), 5_000);
     deadline.unref();
     server.close(() => {
-      clearTimeout(deadline);
-      process.exit(0);
+      void (async () => {
+        try {
+          await database?.close();
+          clearTimeout(deadline);
+          process.exit(0);
+        } catch {
+          process.exit(1);
+        }
+      })();
     });
     if ('closeIdleConnections' in server) server.closeIdleConnections();
   });

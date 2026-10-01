@@ -5,7 +5,9 @@ info:
   description: >-
     Control-plane API derived from docs/API.md. Phase 9 implements authentication,
     scoped projects/tunnels, configured relay metadata and credential issuance in
-    bounded process-local state. Domains/logs/metrics remain later work.
+    PostgreSQL by default (explicit bounded memory mode is available for tests).
+    Durable state and revocation survive API restart. Domains/logs/metrics remain later work.
+    Database admission/transaction failures return 503 STORAGE_UNAVAILABLE.
     JSON bodies are at most 64 KiB. Global 429/503/413 error envelopes apply.
     Secret-bearing responses use Cache-Control no-store and are not replay-cached.
     This contract manages metadata; it does not carry public application traffic.
@@ -393,7 +395,7 @@ paths:
   /internal/credentials/verify:
     post:
       tags: [Auth]
-      description: Relay AUTH-only verification; never used by public request forwarding. Relay credential is scoped to relayId; raw tunnel tokens are not sent here.
+      description: Relay AUTH-only verification; never used by public request forwarding. Relay credential is scoped to relayId; raw tunnel tokens are not sent here. Superseded relay/generation assignments return AUTH_REVOKED; admitted local leases remain usable until replacement or expiry.
       security:
         - relayAuth: []
       requestBody:

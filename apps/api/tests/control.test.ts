@@ -307,6 +307,23 @@ test('generation allocation preserves uint64, respects minimums and capacity, an
       (9007199254740993n + BigInt(i)).toString(),
     ),
   );
+  assert.throws(
+    () =>
+      store.verify(
+        relayToken,
+        'rel_a',
+        digest(results[0]!.value.data.credential.token),
+      ),
+    /revoked/,
+  );
+  assert.equal(
+    store.verify(
+      relayToken,
+      'rel_a',
+      digest(results.at(-1)!.value.data.credential.token),
+    ).generation,
+    results.at(-1)!.value.data.generation,
+  );
   for (let i = 0; i < 8; i++)
     assert.equal(
       (await call(`/tunnels/${t.id}/connect`, 'POST')).r.status,

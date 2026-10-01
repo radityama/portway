@@ -20,7 +20,11 @@
     "db:migrate": "pnpm --filter @portway/api prisma:migrate",
     "db:validate": "pnpm --filter @portway/api prisma:validate",
     "test:bootstrap": "node --test scripts/tests/dev.integration.mjs",
-    "test:control": "node --test scripts/tests/control.integration.mjs"
+    "test:control": "node --test scripts/tests/control.integration.mjs",
+    "db:deploy": "pnpm --filter @portway/api prisma:deploy",
+    "db:seed": "pnpm --filter @portway/api prisma:seed",
+    "test:database": "node --test scripts/tests/database.integration.mjs",
+    "test:database-control": "node --test scripts/tests/database-control.integration.mjs"
   },
   "devDependencies": {
     "@prisma/client": "6.19.3",

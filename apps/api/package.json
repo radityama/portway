@@ -10,7 +10,9 @@
     "test": "node --test tests/*.test.ts",
     "prisma:generate": "prisma generate --config prisma.config.ts",
     "prisma:migrate": "prisma migrate dev --config prisma.config.ts",
-    "prisma:validate": "prisma validate --config prisma.config.ts"
+    "prisma:validate": "prisma validate --config prisma.config.ts",
+    "prisma:deploy": "prisma migrate deploy --config prisma.config.ts",
+    "prisma:seed": "node src/seed-database.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",

@@ -26,8 +26,9 @@ var (
 const MaxCredentials = 1024
 
 type Identity struct {
-	TunnelID  string
-	ExpiresAt time.Time
+	Generation protocol.Generation
+	TunnelID   string
+	ExpiresAt  time.Time
 }
 
 type Verifier interface {

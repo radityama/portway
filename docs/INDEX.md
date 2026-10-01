@@ -24,6 +24,8 @@
 - [Phase 5](./PHASE_5.md) — stream/connection credit, bounded buffering, and slow-consumer isolation
 - [Phase 6](./PHASE_6.md) — heartbeat liveness, reconnect backoff, fresh generations, and no-replay recovery
 - [Phase 7](./PHASE_7.md) — negotiated draining, active work completion, bounded shutdown, and cleanup
+- [Phase 8](./PHASE_8.md) — WebSocket upgrades, SSE and chunked streaming, idle supervision
+- [Phase 9](./PHASE_9.md) — scoped control API, short-lived relay credentials and CLI bootstrap
 
 ## Contract hierarchy
 

@@ -54,6 +54,7 @@ try {
   controller.signal.throwIfAborted();
 
   await supervisor.run('go', ['run', './cmd/dev-init'], { cwd: root });
+  await supervisor.run('node', ['scripts/control-init.mjs'], { cwd: root });
   controller.signal.throwIfAborted();
 
   dependenciesStarted = true;

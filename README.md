@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–8 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API and dashboard are skeletons.
+Phases 0–9 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. Control state is bounded and in memory until Phase 10. The dashboard remains a skeleton.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -164,3 +164,44 @@ Build outputs are `bin/portway`, `bin/portway-relay`, API/shared-package `dist/`
 The agent connects outbound to the relay. Public application bytes stay in the data plane; no API or PostgreSQL call is added per public request.
 
 The source-of-truth hierarchy is PRD → architecture → database/API/routing contracts → implementation. `docs/DATABASE.md` defines the logical data model; `prisma/schema.prisma` represents it. `docs/API.md` defines REST semantics; `docs/openapi.yaml` represents them. See the [documentation index](./docs/INDEX.md).
+
+## Control-plane development (Phase 9)
+
+`make setup` also creates private `.tmp/dev/api-token`, `relay-api-token`, and
+`control-seed.json`. The seed contains hashes and a local organization, project,
+`tnl_local_dev` tunnel and configured relay. Development API/relay keys expire
+after seven days. Setup preserves them; to reprovision after expiry, stop services,
+move those three control files aside, and rerun setup. Relay metadata in an
+existing seed is preserved: update its port if you change `RELAY_PORT`.
+
+Enable API credential issuance and verification in the same shell:
+
+```bash
+export PORTWAY_API_URL=http://localhost:8080/api/v1
+export PORTWAY_API_TOKEN_FILE=.tmp/dev/api-token
+export RELAY_API_URL=http://localhost:8080/api/v1
+export RELAY_API_TOKEN_FILE=.tmp/dev/relay-api-token
+export RELAY_ID=rel_local
+make dev
+```
+
+Then run `PORTWAY_API_TOKEN_FILE=.tmp/dev/api-token .tmp/portway 3000` in another
+shell with a local service on port 3000. `register --once` supports API readiness;
+`connect` remains a direct authentication diagnostic. Unset the API settings to
+use the previous private-file development mode. Never put raw API tokens in CLI
+arguments or URLs. Remote API connections require verified HTTPS; optional
+`PORTWAY_API_CA_FILE` and `RELAY_API_CA_FILE` configure private API trust separately
+from relay trust. The API binds loopback; a trusted HTTPS proxy provides remote access.
+
+The credential lease defaults to five minutes (`API_CREDENTIAL_TTL_SECONDS`,
+1–900 seconds). Expiry closes the session and port invocations obtain a new
+credential with a higher generation. Existing sessions serve public traffic
+during API outages until their lease expires. Revocation blocks future
+authentication; it does not push a close to an already admitted session.
+
+API changes are process-local and disappear on restart. `CONNECTING` represents
+assignment issuance, not confirmed live presence. Database durability is Phase 10;
+dynamic relay health/selection and failover are Phase 11. `pnpm test:control`
+verifies real API/CLI/relay bootstrap, HTTPS/SSE under API outage, expiry, API
+restart recovery and revocation after `make build`. See [Phase 9](./docs/PHASE_9.md)
+for the contract, verification and boundaries.

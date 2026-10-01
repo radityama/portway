@@ -117,3 +117,14 @@ make fuzz
 pnpm db:validate
 pnpm test:bootstrap
 ```
+
+## Phase 9
+
+The API implements provisioned-key/session authentication, organization/role
+authorization, projects/tunnels, configured relay metadata and short-lived
+credentials in bounded in-memory state. Strict JSON, cursor binding, bounded
+idempotency/admission and private hash-only seeds protect this boundary. Relay
+AUTH verification binds tunnel/relay/generation/expiry; public routing stays
+local. Opt-in CLI bootstrap and lease refresh obtain new credentials and higher
+generations, including recovery after API outage/restart. Durability, dynamic
+relay presence and the dashboard remain later phases. See [PHASE_9.md](./PHASE_9.md).

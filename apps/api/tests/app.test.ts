@@ -13,10 +13,10 @@ test('health returns the documented response envelope', async () => {
   });
 });
 
-test('the authentication scaffold does not claim an authenticated identity', async () => {
+test('unconfigured authentication fails closed', async () => {
   const response = await createApp().request('/api/v1/me');
-  assert.equal(response.status, 501);
+  assert.equal(response.status, 401);
   const body = await response.json();
   assert.equal(body.data, null);
-  assert.equal(body.error.code, 'NOT_IMPLEMENTED');
+  assert.equal(body.error.code, 'AUTH_INVALID');
 });

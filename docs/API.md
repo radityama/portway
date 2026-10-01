@@ -433,3 +433,113 @@ The initial contract uses:
 ```
 
 Breaking changes require a new version or a formally documented compatibility strategy.
+
+## 14. Implemented Phase 9 contract
+
+Phase 9 implements the auth, projects, tunnels and read-only relays endpoints
+above. The API uses a bounded process-local store loaded from optional private
+API_SEED_FILE JSON. State is lost at API restart; this is the pre-database boundary,
+not durable persistence. PostgreSQL/migrations are Phase 10; dynamic relay
+registration, health, capacity and failover are Phase 11. Domains/logs/metrics
+remain later endpoints and return the normal NOT_IMPLEMENTED envelope.
+
+Authentication uses deployment-provisioned API keys (hashes only in the seed),
+with userId, organizationId, expiresAt and revokedAt. An active matching membership
+is required. Roles OWNER/ADMIN/MEMBER can mutate organization projects/tunnels;
+VIEWER can read. Project deletion requires OWNER/ADMIN and no child tunnels.
+Cross-organization resources return their normal *_NOT_FOUND (404), preventing
+resource disclosure. Relays are shared operator metadata visible to authenticated
+members; users cannot mutate that registry.
+
+POST /auth/login requires JSON {"token":"<API key>"} and returns
+{"session":{"accessToken":"<one-time secret>","expiresAt":"<UTC time>"}}.
+A session expires after at most one hour and never later than its parent API key.
+Both API keys and sessions can authenticate requests. GET /me returns user and
+organization context. POST /auth/logout returns 204 and revokes the supplied bearer
+(session or API key); revoking a parent key also invalidates its sessions. Missing,
+invalid, expired and revoked bearers return 401 with AUTH_INVALID, AUTH_EXPIRED or
+AUTH_REVOKED. Responses containing secrets set Cache-Control: no-store. Server
+state stores tokenHash only; raw credentials are returned once and never logged.
+
+POST /projects requires name (1–100 characters), slug (1–63 lowercase slug
+characters); the organization comes from the credential. Duplicate slugs return
+409 PROJECT_CONFLICT. POST /tunnels requires projectId, name, type (EPHEMERAL or
+PERSISTENT), protocol (http), localHost (numeric loopback) and localPort (1–65535).
+Optional slug uses the same rules; omission derives a slug from the opaque tunnel
+ID. Metadata is declarative; only the CLI's explicit numeric loopback port is dialed.
+Tunnel IDs are opaque and hostnames use the relay's existing SHA-256 mapping under
+PUBLIC_BASE_DOMAIN. DELETE /tunnels/:id and POST /tunnels/:id/revoke transition to
+REVOKED and invalidate credentials; deletion retains the terminal record/history.
+Generation is a canonical uint64 decimal string, preserving all bits in JSON.
+
+GET collection endpoints accept limit (1–100, default 50) and opaque cursor.
+Responses contain the corresponding plural collection and meta.nextCursor (string
+or null). Cursors are bound to caller, endpoint and validated filters. Tunnel
+filters projectId, status and relayId are applied after authorization. Unknown or
+duplicate query parameters, invalid cursors and unsupported enum values return 400.
+
+POST /tunnels/:id/connect accepts an optional flat JSON object with
+minimumGeneration (canonical uint64 decimal string, >=1). It atomically selects
+the configured HEALTHY TLS relay, reserves max(current generation + 1, minimum),
+sets CONNECTING/relayId and returns {relay,credential,generation,publicHostname}.
+The credential has id,tunnelId,scope (connect),issuedAt,expiresAt and token; TTL is
+5 minutes by default, configurable up to 15 minutes. At most 16 live credentials
+per tunnel are retained. Healthy configured relay absence returns 503
+RELAY_UNAVAILABLE; generation exhaustion returns 409 GENERATION_EXHAUSTED.
+Issuance is atomic: failed admission creates no credential or generation change.
+
+Idempotency-Key (8–255 ASCII token characters) binds caller, method/path and exact
+request bytes for project/tunnel creation, deletion, revoke and connect. Successful
+replays preserve IDs/generations; changed payload returns 409 IDEMPOTENCY_CONFLICT.
+Records expire after 10 minutes and are bounded. Secret-bearing login/connect
+results are not retained for replay: an exact keyed retry returns 409
+CREDENTIAL_ALREADY_ISSUED; use a new key to issue a fresh credential. Authorization
+and current parent-resource access are checked before every replay.
+
+API JSON bodies are capped at 64 KiB and must be objects with documented fields;
+unknown/duplicate fields, wrong types and trailing data return 400, oversize returns 413. Authenticated/unauthenticated work uses a bounded rate limiter (120 requests
+per minute per bearer/remote address), 128 active requests and explicit header,
+body, request and shutdown timeouts. State saturation returns 503 CAPACITY_REACHED;
+unknown routes use NOT_FOUND and errors never echo request values or secrets.
+
+### Internal relay credential verification
+
+POST /api/v1/internal/credentials/verify is authenticated by a separate private
+RELAY_API_TOKEN_FILE credential (hash in the API seed), scoped to relayId. Body:
+{"tokenHash":"<64 lowercase SHA-256 hex>","relayId":"rel_..."}. The API checks
+credential expiry/revocation, tunnel state, issuance relay and parent user/key
+policy, returning {tunnelId,generation,expiresAt}; failures use AUTH_INVALID,
+AUTH_EXPIRED or AUTH_REVOKED. User API keys cannot invoke this endpoint; relay
+keys cannot access user endpoints. Verification runs only during AUTH and is
+bounded by the relay handshake deadline. There is no successful-auth cache or
+public-request API call. Revocation prevents future AUTH; admitted sessions keep
+their bounded lease until expiry, transport failure or shutdown. Active push
+revocation/distributed presence remain later work.
+
+### Agent API bootstrap
+
+PORTWAY_API_TOKEN_FILE explicitly enables control mode for port invocations.
+PORTWAY_API_URL identifies the /api/v1 base; PORTWAY_API_CA_FILE optionally adds
+trusted API roots; HTTP is permitted only for numeric loopback/localhost dev URLs.
+Redirects are never followed. The API is served on loopback and remote operators
+must terminate HTTPS with a trusted proxy. The CLI requests a connection for
+PORTWAY_TUNNEL_ID before each new relay session, supplies its persisted minimum
+generation and validates the returned tunnel/relay/lease/generation/hostname.
+It emits relay_assigned without credentials, then the existing authentication,
+registration and readiness events. API-issued generations advance local state.
+The API does not choose the local service destination. Direct private-file mode
+remains available when PORTWAY_API_TOKEN_FILE is unset.
+
+RELAY_API_URL, RELAY_API_TOKEN_FILE and RELAY_ID opt the relay into API verification;
+otherwise its private file verifier remains in force. API credential expiry in
+control mode schedules bootstrap/reconnect with credential_expired; API 5xx/429
+and network timeouts use control_unavailable. User auth/TLS/protocol/invalid
+assignment errors stay terminal. Active data-plane sessions do not poll the API
+and continue during outages until their credential expiry. Failed application
+streams are never replayed. Existing CLI exit codes remain unchanged.
+
+`register` also uses API bootstrap when `PORTWAY_API_TOKEN_FILE` is configured,
+including `register --once` for development readiness. `connect` remains a direct
+TLS/authentication diagnostic. Expired hash records can be reclaimed: a known
+expired credential returns `AUTH_EXPIRED`, while a reclaimed/unknown hash returns
+`AUTH_INVALID`. Both reject authentication.

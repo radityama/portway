@@ -23,3 +23,10 @@ from the connection lifetime. The CLI signals drain, exits after worker cleanup
 or its configured deadline, and reconnects on remote draining without replay.
 `Close`, existing lifetime contexts and expiry still abort immediately.
 See [Phase 7](../../docs/PHASE_7.md).
+
+Phase 9's CLI bootstrap uses `internal/control` to reserve a minimum generation,
+request a short-lived assignment and connect with a fresh in-memory credential.
+It validates the relay's expiry/hostname/generation against the assignment. Lease
+expiry retries bootstrap with normal backoff; authorization, TLS and malformed
+assignment errors are terminal. Admitted public streams do not query the API.
+See [Phase 9](../../docs/PHASE_9.md).

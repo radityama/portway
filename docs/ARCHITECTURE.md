@@ -535,3 +535,25 @@ Relay cluster
 6. Secrets are never logged.
 7. Existing data-plane traffic can survive control-plane outages.
 8. Stale sessions cannot regain ownership of a tunnel.
+
+## 25. Phase 9 control-plane boundary
+
+The API loads a private hash-only seed into bounded process-local maps. It
+authenticates provisioned organization API keys and expiring sessions, authorizes
+project/tunnel operations by membership, and atomically allocates connection
+credentials and uint64 generations. Relay assignment uses configured HEALTHY
+metadata, not live health reports. Assignment is CONNECTING; live presence is
+later work. No API mutation writes the seed. Restart loses mutations and issued
+credentials; Phase 10 introduces database durability.
+
+An opted-in CLI reserves its local generation minimum, calls the API before
+connecting, validates the returned lease/relay/hostname and uses verified relay
+TLS. A separately authenticated relay sends only the credential hash to the API
+during AUTH, receives a tunnel/generation/expiry lease, and verifies registration
+against it. Public HTTP/WebSocket/SSE continue using the existing local registry
+and mux. API outages leave active sessions usable until their bounded lease
+expires. Revocation applies to future authentication; there is no active push
+revocation yet. Lease refresh uses a new session, cancels interrupted streams, and
+never replays application requests. Persisted client minima prevent generation
+rollback after an API restart with the same seed; lost client state still requires
+the existing explicit recovery override. See API.md and PHASE_9.md.

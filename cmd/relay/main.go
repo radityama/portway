@@ -11,6 +11,7 @@ import (
 
 	"github.com/radityama/portway/internal/auth"
 	"github.com/radityama/portway/internal/config"
+	"github.com/radityama/portway/internal/control"
 	"github.com/radityama/portway/internal/relay"
 	"github.com/radityama/portway/internal/transport"
 )
@@ -27,7 +28,20 @@ func main() {
 		logger.Error("relay_tls_configuration_failed")
 		os.Exit(1)
 	}
-	verifier, err := auth.LoadVerifier(cfg.CredentialsFile)
+	var verifier auth.Verifier
+	if cfg.APITokenFile != "" {
+		var api *control.Client
+		api, err = control.NewClient(cfg.APIURL, cfg.APICAFile, cfg.APITimeout)
+		if err == nil {
+			defer api.Close()
+			_, err = auth.ReadTokenFile(cfg.APITokenFile)
+		}
+		if err == nil {
+			verifier = &auth.ControlVerifier{Client: api, RelayID: cfg.RelayID, TokenFile: cfg.APITokenFile}
+		}
+	} else {
+		verifier, err = auth.LoadVerifier(cfg.CredentialsFile)
+	}
 	if err != nil {
 		logger.Error("relay_credential_configuration_failed")
 		os.Exit(1)

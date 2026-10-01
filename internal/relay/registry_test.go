@@ -193,3 +193,22 @@ func TestDrainRejectsRegistrationWithoutAdvancingWatermark(t *testing.T) {
 		t.Fatal("cleanup lost watermark")
 	}
 }
+
+func TestRegistryEnforcesCredentialGeneration(t *testing.T) {
+	s := NewServer(nil)
+	identity := auth.Identity{TunnelID: "tnl_lease", Generation: 7, ExpiresAt: time.Now().Add(time.Minute)}
+	conn, peer := net.Pipe()
+	defer conn.Close()
+	defer peer.Close()
+	for _, generation := range []protocol.Generation{1, 6, 8, ^protocol.Generation(0)} {
+		if _, code := s.register(context.Background(), identity, "wrong", protocol.Register{TunnelID: identity.TunnelID, Generation: generation}, conn); code != protocol.RegisterForbidden {
+			t.Fatalf("generation %s bypassed lease: %s", generation, code)
+		}
+	}
+	if len(s.sessions) != 0 {
+		t.Fatal("rejected lease changed ownership")
+	}
+	if _, code := s.register(context.Background(), identity, "right", protocol.Register{TunnelID: identity.TunnelID, Generation: 7}, conn); code != "" {
+		t.Fatal(code)
+	}
+}

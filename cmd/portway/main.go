@@ -17,6 +17,7 @@ import (
 	"github.com/radityama/portway/internal/agent"
 	"github.com/radityama/portway/internal/auth"
 	"github.com/radityama/portway/internal/config"
+	"github.com/radityama/portway/internal/control"
 	"github.com/radityama/portway/internal/protocol"
 	"github.com/radityama/portway/internal/transport"
 )
@@ -100,6 +101,15 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	if err != nil {
 		return fail("invalid relay connection configuration", 1)
 	}
+	controlMode := register && cfg.APITokenFile != ""
+	var api *control.Client
+	if controlMode {
+		api, err = control.NewClient(cfg.APIURL, cfg.APICAFile, cfg.APITimeout)
+		if err != nil {
+			return fail("invalid control-plane configuration or certificate trust", 1)
+		}
+		defer api.Close()
+	}
 	shutdownRelay = cfg.Address
 	tlsConfig, err := transport.ClientConfig(cfg.CAFile, cfg.ServerName)
 	if err != nil {
@@ -114,7 +124,8 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 		}
 		return fail(fmt.Sprintf("localhost:%d is not reachable", port), 1)
 	}
-	client := agent.NewClient(&transport.TLSDialer{Config: tlsConfig, Timeout: cfg.ConnectTimeout})
+	dialer := &transport.TLSDialer{Config: tlsConfig, Timeout: cfg.ConnectTimeout}
+	client := agent.NewClient(dialer)
 	client.HandshakeTimeout = cfg.HandshakeTimeout
 	client.IdleTimeout = cfg.IdleTimeout
 	client.WriteTimeout = cfg.WriteTimeout
@@ -138,9 +149,49 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 			defer stopAttempt()
 			// Reload the private file for each new handshake; never retain credentials
 			// in reconnect state or print an underlying read/transport error.
-			token, err := auth.ReadTokenFile(cfg.TokenFile)
-			if err != nil {
-				return errCredentialFile
+			var token string
+			var generation protocol.Generation
+			assignedHostname := ""
+			var assignedExpiry time.Time
+			if controlMode {
+				var err error
+				generation, err = agent.ReserveGeneration(ctx, cfg.StateDir, cfg.TunnelID, explicitGeneration)
+				if err != nil {
+					return errGenerationState
+				}
+				explicitGeneration = 0
+				bearer, err := auth.ReadTokenFile(cfg.APITokenFile)
+				if err != nil {
+					return errCredentialFile
+				}
+				assignment, err := api.Connect(life, cfg.TunnelID, generation, bearer)
+				bearer = ""
+				if err != nil {
+					return err
+				}
+				if assignment.Generation > generation {
+					if _, err := agent.ReserveGeneration(ctx, cfg.StateDir, cfg.TunnelID, assignment.Generation); err != nil {
+						return errGenerationState
+					}
+				}
+				generation = assignment.Generation
+				assignedHostname = assignment.PublicHostname
+				assignedExpiry = assignment.Credential.ExpiresAt
+				cfg.Address = net.JoinHostPort(assignment.Relay.Hostname, strconv.Itoa(assignment.Relay.Port))
+				shutdownRelay = cfg.Address
+				trust, err := transport.ClientConfig(cfg.CAFile, assignment.Relay.Hostname)
+				if err != nil {
+					return control.InvalidAssignment()
+				}
+				dialer.Config = trust
+				token = assignment.Credential.Token
+				emit(Event{Event: "relay_assigned", Relay: cfg.Address, TunnelID: cfg.TunnelID, Generation: generation.String(), PublicHostname: assignedHostname})
+			} else {
+				var err error
+				token, err = auth.ReadTokenFile(cfg.TokenFile)
+				if err != nil {
+					return errCredentialFile
+				}
 			}
 			emit(Event{Event: "tunnel_connecting", Relay: cfg.Address, Port: port})
 			session, err := client.Connect(life, cfg.Address, token)
@@ -149,20 +200,30 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 				return err
 			}
 			defer session.Close()
+			if controlMode && !session.ExpiresAt.Equal(assignedExpiry) {
+				return control.InvalidAssignment()
+			}
 			defer func() {
 				if !time.Now().Before(session.ExpiresAt) && ctx.Err() == nil {
-					result = &agent.AuthenticationError{Code: protocol.AuthExpired}
+					if controlMode {
+						result = control.Expired()
+					} else {
+						result = &agent.AuthenticationError{Code: protocol.AuthExpired}
+					}
 				}
 			}()
 			connectionID = session.ConnectionID
 			emit(Event{Event: "relay_authenticated", ConnectionID: session.ConnectionID, Relay: cfg.Address, LocalURL: localURL, Port: port})
 			publicURL := ""
 			if register {
-				generation, err := agent.ReserveGeneration(ctx, cfg.StateDir, cfg.TunnelID, explicitGeneration)
-				if err != nil {
-					return errGenerationState
+				if !controlMode {
+					var err error
+					generation, err = agent.ReserveGeneration(ctx, cfg.StateDir, cfg.TunnelID, explicitGeneration)
+					if err != nil {
+						return errGenerationState
+					}
+					explicitGeneration = 0
 				}
-				explicitGeneration = 0
 				mode := ""
 				if port != 0 {
 					mode = "http"
@@ -170,6 +231,9 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 				ack, err := session.Register(ctx, protocol.Register{TunnelID: cfg.TunnelID, Generation: generation, Protocol: mode})
 				if err != nil {
 					return err
+				}
+				if controlMode && ack.PublicHostname != assignedHostname {
+					return control.InvalidAssignment()
 				}
 				emit(Event{Event: "tunnel_registered", TunnelID: ack.TunnelID, ConnectionID: ack.ConnectionID, Generation: ack.Generation.String(), PublicHostname: ack.PublicHostname, Relay: cfg.Address, LocalURL: localURL, Port: port})
 				publicURL = ack.PublicURL
@@ -231,7 +295,11 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 			}
 			return 0
 		}
-		if port == 0 || !agent.Retryable(attemptErr) {
+		if port == 0 || !(agent.Retryable(attemptErr) || control.Retryable(attemptErr)) {
+			var controlFailure *control.Error
+			if errors.As(attemptErr, &controlFailure) {
+				return fail(controlFailure.Error(), 1)
+			}
 			var authentication *agent.AuthenticationError
 			var registration *agent.RegistrationError
 			if errors.As(attemptErr, &authentication) {
@@ -246,6 +314,14 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 			return fail("relay connection failed; check address, TLS trust, and relay availability", 1)
 		}
 		reason := agent.DisconnectReason(attemptErr)
+		var controlFailure *control.Error
+		if errors.As(attemptErr, &controlFailure) {
+			if controlFailure.Code == "CREDENTIAL_EXPIRED" {
+				reason = "credential_expired"
+			} else {
+				reason = "control_unavailable"
+			}
+		}
 		if connectionID != "" {
 			emit(Event{Event: "tunnel_disconnected", ConnectionID: connectionID, Relay: cfg.Address, Reason: reason})
 		}

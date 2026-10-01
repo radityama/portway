@@ -11,6 +11,7 @@ try {
   await supervisor.run('pnpm', ['install', '--frozen-lockfile'], { cwd: root });
   await supervisor.run('pnpm', ['db:generate'], { cwd: root });
   await supervisor.run('go', ['run', './cmd/dev-init'], { cwd: root });
+  await supervisor.run('node', ['scripts/control-init.mjs'], { cwd: root });
   console.log('Portway setup complete. Start development with make dev.');
 } catch (error) {
   console.error(`Portway setup failed: ${error.message}`);

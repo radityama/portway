@@ -1,6 +1,8 @@
 # auth
 
-The Phase 2 verifier authenticates hashed, scoped, expiring credentials from a
-private bounded policy file. It adds no persistence model. The verifier interface
-allows the future control-plane credential policy to replace local fixtures.
-See [Phase 2](../../docs/PHASE_2.md).
+Private-file verification supports hashed, scoped, expiring development credentials.
+Phase 9 also supplies a control-plane verifier: it reloads a private relay-scoped
+key, sends only the tunnel credential hash during AUTH and receives a bounded
+tunnel/generation/expiry lease. Registration enforces that exact generation.
+Public requests and active sessions use local state without API calls.
+See [Phase 2](../../docs/PHASE_2.md) and [Phase 9](../../docs/PHASE_9.md).

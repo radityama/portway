@@ -19,7 +19,8 @@
     "db:generate": "pnpm --filter @portway/api prisma:generate",
     "db:migrate": "pnpm --filter @portway/api prisma:migrate",
     "db:validate": "pnpm --filter @portway/api prisma:validate",
-    "test:bootstrap": "node --test scripts/tests/dev.integration.mjs"
+    "test:bootstrap": "node --test scripts/tests/dev.integration.mjs",
+    "test:control": "node --test scripts/tests/control.integration.mjs"
   },
   "devDependencies": {
     "@prisma/client": "6.19.3",

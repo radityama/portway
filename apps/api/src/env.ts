@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { loadEnvFile } from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
 export function parseEnvironment(source: NodeJS.ProcessEnv) {
   const apiPort = Number(source.API_PORT ?? '8080');
@@ -26,11 +27,35 @@ export function parseEnvironment(source: NodeJS.ProcessEnv) {
     }
   }
 
+  const baseDomain = source.PUBLIC_BASE_DOMAIN ?? 'portway.localhost';
+  if (
+    baseDomain.length > 218 ||
+    !/[a-z]/.test(baseDomain) ||
+    !baseDomain.includes('.') ||
+    !/^[a-z0-9]+(?:[a-z0-9.-]*[a-z0-9])?$/.test(baseDomain) ||
+    baseDomain
+      .split('.')
+      .some((s) => !s || s.length > 63 || s.startsWith('-') || s.endsWith('-'))
+  )
+    throw new Error('PUBLIC_BASE_DOMAIN must be a DNS name');
+  const credentialTTL = Number(source.API_CREDENTIAL_TTL_SECONDS ?? '300');
+  if (
+    !Number.isInteger(credentialTTL) ||
+    credentialTTL < 1 ||
+    credentialTTL > 900
+  )
+    throw new Error('API_CREDENTIAL_TTL_SECONDS must be between 1 and 900');
+  const root = fileURLToPath(new URL('../../../', import.meta.url));
+  const defaultSeed = resolve(root, '.tmp/dev/control-seed.json');
+  const configuredSeed =
+    source.API_SEED_FILE ?? (existsSync(defaultSeed) ? defaultSeed : '');
   return {
     apiPort,
+    seedFile: configuredSeed ? resolve(root, configuredSeed) : '',
+    credentialTTL: credentialTTL * 1000,
     databaseUrl: source.DATABASE_URL ?? '',
     redisUrl: source.REDIS_URL ?? 'redis://localhost:6379',
-    publicBaseDomain: source.PUBLIC_BASE_DOMAIN ?? 'portway.localhost',
+    publicBaseDomain: baseDomain,
   };
 }
 

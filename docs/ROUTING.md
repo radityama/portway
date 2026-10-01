@@ -675,3 +675,18 @@ TCP routing should be implemented as a separate protocol surface rather than wea
 5. Streaming is end-to-end.
 6. WebSocket upgrades preserve bidirectional behavior.
 7. Control-plane outages do not necessarily terminate active sessions.
+
+## 31. Phase 9 credential admission
+
+Control-mode relay AUTH verifies a hashed short-lived credential via a bounded
+control-plane call authenticated by a relay-scoped private key. REGISTER must
+match both its tunnel ID and exact issued generation. Once admitted, ownership,
+HTTP routing, WebSocket/SSE streaming and expiry checks remain local. There is no
+API or database lookup for a public request. An API outage blocks new admissions
+but does not terminate an existing lease before expiry. Credential or tunnel
+revocation prevents future AUTH; already admitted sessions expire locally.
+
+Control-mode port invocations bootstrap again after lease expiry or transport
+loss, obtaining a new credential and a strictly higher persisted generation.
+Interrupted application streams are canceled without replay. Direct development
+file credentials retain their earlier expiry/registration semantics.

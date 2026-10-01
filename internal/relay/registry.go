@@ -58,7 +58,7 @@ func (s *Server) Lookup(hostname string) (Session, bool) {
 // register is reachable only after credential verification. All ownership
 // changes and watermarks share one lock; socket closure happens outside it.
 func (s *Server) register(ctx context.Context, identity auth.Identity, connectionID string, request protocol.Register, conn net.Conn) (*registryEntry, string) {
-	if request.TunnelID != identity.TunnelID {
+	if request.TunnelID != identity.TunnelID || identity.Generation != 0 && request.Generation != identity.Generation {
 		return nil, protocol.RegisterForbidden
 	}
 	if ctx.Err() != nil || !time.Now().Before(identity.ExpiresAt) {

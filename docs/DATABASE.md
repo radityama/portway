@@ -400,3 +400,16 @@ Durable identity lives in PostgreSQL.
 Ephemeral connection state lives in the relay process and Redis.
 
 The system must tolerate Redis loss by allowing relays to re-register and rebuild ephemeral state.
+
+## 13. Phase 9 storage boundary
+
+Before Phase 10 migrations, the control API uses bounded in-memory representations
+of the existing User, Organization, Membership, Project, Tunnel, TunnelCredential,
+Relay and ApiKey meanings. No Prisma entity or field is added. Private seed files
+contain hashes, not raw tokens. API sessions, issuance relay/generation/parent-key
+bindings, rate buckets, cursors and idempotency entries are bounded ephemeral
+control state with TTLs; they are not additional durable entities. Secret-bearing
+responses are not cached. Tunnel deletion retains a terminal REVOKED record.
+API restart loses runtime mutations and credentials; relay ownership watermarks
+still fail closed against stale generations. Phase 10 must make identity,
+credentials, generation reservations and audit history durable before production.

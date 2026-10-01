@@ -2,7 +2,13 @@ openapi: 3.1.0
 info:
   title: Portway Control Plane API
   version: 1.0.0
-  description: Control-plane API derived from docs/API.md. This contract manages identity and metadata; it does not carry public application traffic.
+  description: >-
+    Control-plane API derived from docs/API.md. Phase 9 implements authentication,
+    scoped projects/tunnels, configured relay metadata and credential issuance in
+    bounded process-local state. Domains/logs/metrics remain later work.
+    JSON bodies are at most 64 KiB. Global 429/503/413 error envelopes apply.
+    Secret-bearing responses use Cache-Control no-store and are not replay-cached.
+    This contract manages metadata; it does not carry public application traffic.
 servers:
   - url: https://api.portway.example.com/api/v1
   - url: http://localhost:8080/api/v1
@@ -21,13 +27,17 @@ paths:
     post:
       tags: [Auth]
       security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/LoginRequest'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           $ref: '#/components/responses/SessionResponse'
         '400':
@@ -41,6 +51,8 @@ paths:
       security:
         - bearerAuth: []
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '204':
           description: Session revoked.
         '401':
@@ -52,6 +64,8 @@ paths:
       security:
         - bearerAuth: []
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           $ref: '#/components/responses/MeResponse'
         '401':
@@ -66,6 +80,8 @@ paths:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           $ref: '#/components/responses/ProjectListResponse'
         '401':
@@ -83,6 +99,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateProjectRequest'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           $ref: '#/components/responses/ProjectResponse'
         '400':
@@ -100,6 +118,8 @@ paths:
       security:
         - bearerAuth: []
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           $ref: '#/components/responses/ProjectResponse'
         '401':
@@ -113,6 +133,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '204':
           description: Project deleted according to lifecycle policy.
         '401':
@@ -138,6 +160,8 @@ paths:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           $ref: '#/components/responses/TunnelListResponse'
         '401':
@@ -155,6 +179,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateTunnelRequest'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '201':
           $ref: '#/components/responses/TunnelResponse'
         '400':
@@ -172,6 +198,8 @@ paths:
       security:
         - bearerAuth: []
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           $ref: '#/components/responses/TunnelResponse'
         '401':
@@ -185,6 +213,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '204':
           description: Tunnel deleted or transitioned to its terminal lifecycle state.
         '401':
@@ -201,6 +231,8 @@ paths:
         - $ref: '#/components/parameters/TunnelId'
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           $ref: '#/components/responses/TunnelResponse'
         '401':
@@ -218,7 +250,14 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TunnelId'
         - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConnectRequest' }
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           $ref: '#/components/responses/ConnectResponse'
         '401':
@@ -293,6 +332,8 @@ paths:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           $ref: '#/components/responses/RelayListResponse'
         '401':
@@ -306,6 +347,8 @@ paths:
       security:
         - bearerAuth: []
       responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
         '200':
           $ref: '#/components/responses/RelayResponse'
         '401':
@@ -347,11 +390,61 @@ paths:
         '404':
           $ref: '#/components/responses/ErrorResponse'
 
+  /internal/credentials/verify:
+    post:
+      tags: [Auth]
+      description: Relay AUTH-only verification; never used by public request forwarding. Relay credential is scoped to relayId; raw tunnel tokens are not sent here.
+      security:
+        - relayAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tokenHash, relayId]
+              properties:
+                tokenHash: { type: string, pattern: '^[a-f0-9]{64}$' }
+                relayId: { type: string }
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: Verified tunnel and generation binding.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [tunnelId, generation, expiresAt]
+                        properties:
+                          tunnelId: { type: string }
+                          generation:
+                            { type: string, pattern: '^[1-9][0-9]{0,19}$' }
+                          expiresAt: { type: string, format: date-time }
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '503':
+          $ref: '#/components/responses/ErrorResponse'
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
+    relayAuth:
+      type: http
+      scheme: bearer
+      description: Separate operator-provisioned relay verification credential.
 
   parameters:
     ProjectId:
@@ -473,12 +566,12 @@ components:
         slug: { type: string }
         type: { $ref: '#/components/schemas/TunnelType' }
         status: { $ref: '#/components/schemas/TunnelStatus' }
-        protocol: { type: string, example: http }
+        protocol: { type: string, enum: [http] }
         localHost: { type: string }
         localPort: { type: integer, nullable: true, minimum: 1, maximum: 65535 }
         publicHostname: { type: string, nullable: true }
         relayId: { type: string, nullable: true }
-        generation: { type: integer, format: int64 }
+        generation: { type: string, pattern: '^[1-9][0-9]{0,19}$|^0$' }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         lastConnectedAt: { type: string, format: date-time, nullable: true }
@@ -524,21 +617,26 @@ components:
 
     CreateProjectRequest:
       type: object
+      additionalProperties: false
       required: [name, slug]
       properties:
         name: { type: string, minLength: 1, maxLength: 100 }
-        slug: { type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
+        slug:
+          { type: string, maxLength: 63, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
 
     CreateTunnelRequest:
       type: object
-      required: [projectId, name, type, protocol, localHost]
+      additionalProperties: false
+      required: [projectId, name, type, protocol, localHost, localPort]
       properties:
         projectId: { type: string }
         name: { type: string, minLength: 1, maxLength: 100 }
-        slug: { type: string }
+        slug:
+          { type: string, maxLength: 63, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
         type: { $ref: '#/components/schemas/TunnelType' }
-        protocol: { type: string, example: http }
-        localHost: { type: string, default: 127.0.0.1 }
+        protocol: { type: string, enum: [http] }
+        localHost:
+          { type: string, description: Numeric IPv4 or IPv6 loopback address. }
         localPort: { type: integer, minimum: 1, maximum: 65535 }
 
     CreateDomainRequest:
@@ -550,15 +648,35 @@ components:
 
     LoginRequest:
       type: object
-      additionalProperties: true
-      description: Authentication mechanism is deployment-specific. OAuth/device-flow fields may be added without changing the core response envelope.
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: { type: string, minLength: 32, maxLength: 512, writeOnly: true }
+      description: Phase 9 exchanges a provisioned API key for a one-hour bounded session. OAuth/device flow remains later work.
+
+    IssuedTunnelCredential:
+      allOf:
+        - $ref: '#/components/schemas/TunnelCredential'
+        - type: object
+          required: [token, expiresAt]
+          properties:
+            expiresAt: { type: string, format: date-time }
+            token: { type: string, minLength: 32, maxLength: 512 }
+
+    ConnectRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        minimumGeneration: { type: string, pattern: '^[1-9][0-9]{0,19}$' }
 
     ConnectAssignment:
       type: object
-      required: [relay, credential]
+      required: [relay, credential, generation, publicHostname]
       properties:
+        generation: { type: string, pattern: '^[1-9][0-9]{0,19}$' }
+        publicHostname: { type: string }
         relay: { $ref: '#/components/schemas/Relay' }
-        credential: { $ref: '#/components/schemas/TunnelCredential' }
+        credential: { $ref: '#/components/schemas/IssuedTunnelCredential' }
 
     RequestLog:
       type: object
@@ -612,7 +730,7 @@ components:
                       session: { $ref: '#/components/schemas/Session' }
 
     MeResponse:
-      description: Current user.
+      description: Current user, organization and membership role.
       content:
         application/json:
           schema:
@@ -624,6 +742,15 @@ components:
                     type: object
                     properties:
                       user: { $ref: '#/components/schemas/User' }
+                      organization:
+                        type: object
+                        required: [id, name, slug]
+                        properties:
+                          id: { type: string }
+                          name: { type: string }
+                          slug: { type: string }
+                      role:
+                        { type: string, enum: [OWNER, ADMIN, MEMBER, VIEWER] }
 
     ProjectResponse:
       description: Project response.
@@ -694,7 +821,7 @@ components:
                     additionalProperties: true
 
     ConnectResponse:
-      description: Relay assignment and short-lived tunnel credential.
+      description: Relay, reserved generation, hostname and one-time short-lived credential. Cache-Control no-store. Exact secret-bearing idempotency replay returns CREDENTIAL_ALREADY_ISSUED.
       content:
         application/json:
           schema:
@@ -702,12 +829,7 @@ components:
               - $ref: '#/components/schemas/Envelope'
               - type: object
                 properties:
-                  data:
-                    type: object
-                    properties:
-                      relay: { $ref: '#/components/schemas/Relay' }
-                      credential:
-                        { $ref: '#/components/schemas/TunnelCredential' }
+                  data: { $ref: '#/components/schemas/ConnectAssignment' }
 
     DomainResponse:
       description: Domain response.

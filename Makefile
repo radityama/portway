@@ -1,4 +1,4 @@
-.PHONY: setup dev dev-credentials doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check integration e2e load-test
+.PHONY: setup dev dev-credentials doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check control-integration integration e2e load-test
 
 FUZZTIME ?= 10s
 
@@ -32,6 +32,7 @@ fuzz:
 	go test ./internal/protocol -run '^$$' -fuzz '^FuzzFrameRoundTrip$$' -fuzztime=$(FUZZTIME) -parallel=2
 	go test ./internal/protocol -run '^$$' -fuzz '^FuzzHandshake$$' -fuzztime=$(FUZZTIME) -parallel=2
 	go test ./internal/protocol -run '^$$' -fuzz '^FuzzStreamPayloads$$' -fuzztime=$(FUZZTIME) -parallel=2
+	go test ./internal/control -run '^$$' -fuzz '^FuzzControlJSON$$' -fuzztime=$(FUZZTIME) -parallel=2
 	go test ./internal/httpwire -run '^$$' -fuzz '^FuzzWebSocketResponse$$' -fuzztime=$(FUZZTIME) -parallel=2
 
 lint:
@@ -55,7 +56,10 @@ build:
 	go build -o bin/portway-relay ./cmd/relay
 	pnpm build
 
-check: fmt-check test test-race lint typecheck build
+check: fmt-check test test-race lint typecheck build control-integration
+
+control-integration: build
+	pnpm test:control
 
 integration:
 	go test ./tests/integration/...

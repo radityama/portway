@@ -322,6 +322,15 @@ relay assignment
 Agent → Relay
 ```
 
+Phase 9 implements these endpoints with a bounded in-memory store, private
+hash-only provisioning, organization/role authorization, strict bounded JSON,
+caller-bound pagination and bounded idempotency. The API returns a short-lived
+relay/tunnel/generation-bound credential; relay verification happens during AUTH
+only. Opt-in CLI bootstrap obtains fresh credentials and higher generations on
+reconnect, including lease expiry, while admitted traffic survives API outages
+until expiry. Database durability and dynamic relay presence remain the next
+phases. See [PHASE_9.md](./PHASE_9.md).
+
 ## 14. Phase 10 — Database
 
 Add Prisma models from DATABASE.md.

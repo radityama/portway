@@ -31,6 +31,8 @@ type Event struct {
 	TunnelID       string `json:"tunnel_id,omitempty"`
 	Generation     string `json:"generation,omitempty"`
 	PublicHostname string `json:"public_hostname,omitempty"`
+	PublicURL      string `json:"public_url,omitempty"`
+	URL            string `json:"url,omitempty"`
 }
 
 func main() {
@@ -106,6 +108,8 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	client.IdleTimeout = cfg.IdleTimeout
 	client.WriteTimeout = cfg.WriteTimeout
 	client.RegistrationTimeout = cfg.RegistrationTimeout
+	client.MaxStreams = cfg.MaxStreams
+	client.StreamTimeout = cfg.StreamTimeout
 	session, err := client.Connect(ctx, cfg.Address, token)
 	token = ""
 	if err != nil {
@@ -125,6 +129,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 		localURL = fmt.Sprintf("http://127.0.0.1:%d", port)
 	}
 	emit(Event{Event: "relay_authenticated", ConnectionID: session.ConnectionID, Relay: cfg.Address, LocalURL: localURL, Port: port})
+	publicURL := ""
 	if register {
 		generation, err := agent.ReserveGeneration(ctx, cfg.StateDir, cfg.TunnelID, cfg.Generation)
 		if err != nil {
@@ -134,7 +139,11 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 			}
 			return fail("cannot reserve tunnel generation; check state directory or concurrent starts", 1)
 		}
-		ack, err := session.Register(ctx, protocol.Register{TunnelID: cfg.TunnelID, Generation: generation})
+		mode := ""
+		if port != 0 {
+			mode = "http"
+		}
+		ack, err := session.Register(ctx, protocol.Register{TunnelID: cfg.TunnelID, Generation: generation, Protocol: mode})
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				emit(Event{Event: "shutdown_complete"})
@@ -147,6 +156,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 			return fail("tunnel registration failed; check relay availability and configuration", 1)
 		}
 		emit(Event{Event: "tunnel_registered", TunnelID: ack.TunnelID, ConnectionID: ack.ConnectionID, Generation: ack.Generation.String(), PublicHostname: ack.PublicHostname, Relay: cfg.Address, LocalURL: localURL, Port: port})
+		publicURL = ack.PublicURL
 		if jsonMode != "1" {
 			fmt.Fprintf(stdout, "✓ Tunnel registered\nHostname %s\n", ack.PublicHostname)
 		}
@@ -157,13 +167,26 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 			fmt.Fprintf(stdout, "Local %s\n", localURL)
 		}
 		if !once {
-			fmt.Fprintln(stdout, "Public forwarding is not available yet. Press Ctrl+C to disconnect.")
+			fmt.Fprintln(stdout, "Press Ctrl+C to disconnect.")
 		}
 	}
 	if once {
 		return 0
 	}
-	if err := session.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+	var waitErr error
+	if port != 0 {
+		waitErr = session.ServeHTTPReady(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), func() {
+			emit(Event{Event: "tunnel_connected", ConnectionID: session.ConnectionID, Relay: cfg.Address})
+			emit(Event{Event: "public_url", URL: publicURL})
+			emit(Event{Event: "ready", PublicURL: publicURL, LocalURL: localURL, Port: port})
+			if jsonMode != "1" {
+				fmt.Fprintf(stdout, "Public %s\nReady.\n", publicURL)
+			}
+		})
+	} else {
+		waitErr = session.Wait()
+	}
+	if waitErr != nil && !errors.Is(waitErr, context.Canceled) {
 		return fail("relay connection closed", 1)
 	}
 	emit(Event{Event: "shutdown_complete"})

@@ -69,5 +69,8 @@ func (f Frame) validateHeader(length uint64, limit uint32) error {
 	if f.Type >= TypeHello && f.Type <= TypeRegisterError && length > MaxHandshakePayloadSize {
 		return ErrPayloadTooLarge
 	}
+	if f.Type == TypeData && length > MaxDataSize || f.Type == TypeOpenStream && length > MaxOpenPayloadSize || f.Type >= TypeOpenStreamOK && f.Type <= TypeResetStream && f.Type != TypeData && length > MaxHandshakePayloadSize {
+		return ErrPayloadTooLarge
+	}
 	return nil
 }

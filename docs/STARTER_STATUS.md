@@ -32,8 +32,18 @@ generation replacement, bounded retained watermarks, and owner-aware cleanup are
 implemented. The CLI persists generation reservations and emits `tunnel_registered`;
 development readiness verifies registration. See [PHASE_3.md](./PHASE_3.md).
 
-The next phase is Phase 4: public HTTP forwarding. Durable credential issuance, database
-migrations, and dashboard features remain later work.
+## Phase 4
+
+Public HTTPS forwards ordinary HTTP requests to the agent's fixed loopback port.
+Host/SNI validation, bounded logical streams, body/header limits, full duplex
+streaming, half-close/reset, cancellation, timeouts, and session replacement are
+implemented. The CLI emits its HTTPS URL and forwarding readiness. Development
+readiness now verifies both agent registration and public TLS. See
+[PHASE_4.md](./PHASE_4.md).
+
+The next phase is Phase 5: independent stream and connection flow-control windows.
+Durable credential issuance, database migrations, and dashboard features remain
+later work.
 
 ## What this starter contains
 
@@ -43,6 +53,7 @@ migrations, and dashboard features remain later work.
 - implemented versioned protocol framing and capability-negotiation package
 - agent/relay TLS handshake, connection lifecycle, and private development setup
 - tunnel registration, hostname resolution, generation ownership, and local counters
+- public HTTPS routing, bounded HTTP streams, and fixed loopback forwarding
 - control-plane HTTP API scaffold
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification

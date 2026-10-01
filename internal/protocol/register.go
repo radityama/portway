@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -80,6 +81,7 @@ func ValidHostname(host string) bool {
 type Register struct {
 	TunnelID   string     `json:"tunnel_id"`
 	Generation Generation `json:"generation"`
+	Protocol   string     `json:"protocol,omitempty"`
 }
 
 type RegisterOK struct {
@@ -87,6 +89,7 @@ type RegisterOK struct {
 	ConnectionID   string     `json:"connection_id"`
 	Generation     Generation `json:"generation"`
 	PublicHostname string     `json:"public_hostname"`
+	PublicURL      string     `json:"public_url,omitempty"`
 }
 
 type RegisterError struct {
@@ -102,7 +105,7 @@ const (
 )
 
 func (value Register) Validate() error {
-	if !ValidTunnelID(value.TunnelID) || value.Generation == 0 {
+	if !ValidTunnelID(value.TunnelID) || value.Generation == 0 || (value.Protocol != "" && value.Protocol != "http") {
 		return ErrInvalidHandshake
 	}
 	return nil
@@ -115,6 +118,20 @@ func (value RegisterOK) Validate() error {
 	if !validConnectionID(value.ConnectionID) || !ValidHostname(value.PublicHostname) {
 		return ErrInvalidHandshake
 	}
+	if value.PublicURL != "" {
+		u, err := url.Parse(value.PublicURL)
+		if err != nil || u.Scheme != "https" || u.User != nil || u.Hostname() != value.PublicHostname || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+			return ErrInvalidHandshake
+		}
+		if u.Port() != "" {
+			p, err := strconv.Atoi(u.Port())
+			if err != nil || p < 1 || p > 65535 || u.Host != value.PublicHostname+":"+strconv.Itoa(p) {
+				return ErrInvalidHandshake
+			}
+		} else if u.Host != value.PublicHostname {
+			return ErrInvalidHandshake
+		}
+	}
 	return nil
 }
 
@@ -123,6 +140,9 @@ func (value RegisterOK) ValidateFor(request Register, connectionID string) error
 		return err
 	}
 	if value.TunnelID != request.TunnelID || value.Generation != request.Generation || value.ConnectionID != connectionID {
+		return ErrInvalidHandshake
+	}
+	if request.Protocol == "" && value.PublicURL != "" || request.Protocol == "http" && value.PublicURL == "" {
 		return ErrInvalidHandshake
 	}
 	return nil
@@ -140,7 +160,7 @@ func DecodeRegister(frame Frame) (Register, error) {
 		return value, err
 	}
 	keys := []string{"tunnel_id", "generation"}
-	if err := decodeObject(frame.Payload, &value, keys, keys, keys); err != nil {
+	if err := decodeObject(frame.Payload, &value, append(keys, "protocol"), keys, append(keys, "protocol")); err != nil {
 		return Register{}, err
 	}
 	if err := value.Validate(); err != nil {
@@ -160,7 +180,7 @@ func DecodeRegisterOK(frame Frame) (RegisterOK, error) {
 		return value, err
 	}
 	keys := []string{"tunnel_id", "connection_id", "generation", "public_hostname"}
-	if err := decodeObject(frame.Payload, &value, keys, keys, keys); err != nil {
+	if err := decodeObject(frame.Payload, &value, append(keys, "public_url"), keys, append(keys, "public_url")); err != nil {
 		return RegisterOK{}, err
 	}
 	if err := value.Validate(); err != nil {

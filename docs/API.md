@@ -312,14 +312,15 @@ Suggested:
 
 Keep exit codes stable for automation.
 
-### Current CLI connection and registration milestones (Phases 2–3)
+### Current CLI connection, registration, and forwarding milestones (Phases 2–4)
 
 `portway connect --once` verifies one authenticated relay handshake and exits.
 `portway connect` holds an unregistered diagnostic connection until interruption,
 registration timeout, expiry, or peer closure. `portway register [--once]`
 authenticates and registers the configured tunnel. `portway <port>` also checks
-the configured local service before authentication/registration. REGISTER_OK
-assigns a hostname; public forwarding is Phase 4.
+the configured local service before authentication/registration, requests HTTP
+forwarding, and runs the stream receiver after REGISTER_OK assigns a hostname
+and HTTPS URL. The local upstream is fixed to the selected loopback port.
 
 Human output is concise. `PORTWAY_JSON=1` emits only newline-delimited JSON on
 stdout: `starting`, `tunnel_connecting`, `relay_authenticated`, and (for a held
@@ -327,8 +328,13 @@ connection) `shutdown_complete` or `error`. Each event includes an RFC3339
 `timestamp`. `relay_authenticated` includes `connection_id` and `relay`; it never
 includes credentials. Successful registration emits `tunnel_registered` with
 `tunnel_id`, `connection_id`, `generation` (decimal string), `public_hostname`,
-and `relay`; port invocations also include `local_url` and `port`. No `ready`,
-`tunnel_connected`, or `public_url` event is emitted before forwarding exists.
+and `relay`; port invocations also include `local_url` and `port`. Once the HTTP
+receiver is configured, a port invocation emits `tunnel_connected` with
+`connection_id` and `relay`, `public_url` with `url`, and `ready` with
+`public_url`, `local_url`, and `port`. The URL comes from the verified relay's
+registration ACK and must match the assigned hostname. These events describe
+forwarding readiness, not a promise that the local application stays available.
+Diagnostic `connect` and `register` commands do not emit forwarding readiness.
 `register --once` exits immediately after the ACK and closes/removes its route;
 it is a diagnostic command. Held registration closes on cancellation, replacement,
 idle timeout, expiry, or peer closure. Registration errors use stable protocol
@@ -337,7 +343,7 @@ codes in the error event without echoing payloads. Local generations persist in
 also update the local counter.
 
 Existing implemented exit codes are preserved: `0` for success/clean shutdown,
-`1` for connection/authentication/registration/local-service failures, and `2` for invalid
+`1` for connection/authentication/registration/forwarding/local-service failures, and `2` for invalid
 command usage. The broader suggested codes above remain a future CLI change.
 This milestone changes the CLI interface only; REST/OpenAPI semantics are unchanged.
 

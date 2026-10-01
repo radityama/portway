@@ -24,6 +24,7 @@ test(
       'API_PORT',
       'DASHBOARD_PORT',
       'RELAY_PORT',
+      'PUBLIC_PORT',
       'POSTGRES_PORT',
       'REDIS_PORT',
     ]) {
@@ -99,6 +100,7 @@ test(
         'API_PORT',
         'DASHBOARD_PORT',
         'RELAY_PORT',
+        'PUBLIC_PORT',
         'POSTGRES_PORT',
         'REDIS_PORT',
       ]) {

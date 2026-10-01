@@ -234,6 +234,16 @@ replacement closes the old socket, and old cleanup cannot remove the new route.
 Lookup returns immutable active-owner metadata with no API/database call. Agent
 generation reservations persist locally; relay restart loses ephemeral ownership.
 
+Phase 4 attaches a bounded stream multiplexer to HTTP registrations and serves
+public HTTPS through the local owner registry. Host and TLS SNI must agree.
+Each request carries validated HTTP metadata and body frames to the agent's
+fixed loopback TCP destination; application responses stream back without an
+API/database call. Cancellation, expiry, replacement, and shutdown close the
+parent connection's streams and local sockets. Per-stream deadlines and bounded
+synchronous pipes prevent growing receive queues. A blocked consumer can stall
+other streams on that connection until it reads or is cancelled; independent
+receive/send credit windows are the next phase.
+
 ## 9. Multiplexing
 
 One agent-to-relay connection should support many concurrent logical streams:

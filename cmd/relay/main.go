@@ -42,6 +42,10 @@ func main() {
 	server.RegistrationTimeout = cfg.RegistrationTimeout
 	server.PublicBaseDomain = cfg.PublicBaseDomain
 	server.MaxTunnels = cfg.MaxTunnels
+	server.PublicPort = cfg.PublicPort
+	server.MaxPublicConnections = cfg.MaxPublicConnections
+	server.MaxStreams = uint32(cfg.MaxStreams)
+	server.StreamTimeout = cfg.StreamTimeout
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	listener, err := net.Listen("tcp", cfg.Address)
@@ -49,8 +53,28 @@ func main() {
 		logger.Error("relay_listen_failed")
 		os.Exit(1)
 	}
+	publicConfig, err := transport.ServerConfig(cfg.PublicCertFile, cfg.PublicKeyFile)
+	if err != nil {
+		listener.Close()
+		logger.Error("public_tls_configuration_failed")
+		os.Exit(1)
+	}
+	publicListener, err := net.Listen("tcp", cfg.PublicAddress)
+	if err != nil {
+		listener.Close()
+		logger.Error("public_listen_failed")
+		os.Exit(1)
+	}
 	logger.Info("relay_listening", "address", cfg.Address, "transport", "tls", "protocol", transport.ALPN)
-	if err := server.Serve(ctx, listener); err != nil {
+	logger.Info("public_https_listening", "address", cfg.PublicAddress)
+	life, cancel := context.WithCancel(ctx)
+	done := make(chan error, 2)
+	go func() { done <- server.Serve(life, listener) }()
+	go func() { done <- server.ServeHTTPS(life, publicListener, publicConfig) }()
+	first := <-done
+	cancel()
+	second := <-done
+	if first != nil || second != nil {
 		logger.Error("relay_serve_failed")
 		os.Exit(1)
 	}

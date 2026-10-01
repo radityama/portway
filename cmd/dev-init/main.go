@@ -16,5 +16,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if err := devsetup.EnsurePublic(*dir, *force); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	fmt.Println("Portway development TLS and credential files are ready.")
 }

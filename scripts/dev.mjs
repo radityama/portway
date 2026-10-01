@@ -1,7 +1,8 @@
-import { mkdir, access } from 'node:fs/promises';
+import { mkdir, access, readFile } from 'node:fs/promises';
+import { request as httpsRequest } from 'node:https';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -42,7 +43,12 @@ try {
   await access(join(root, 'node_modules/.modules.yaml')).catch(() => {
     throw new Error('Dependencies are missing; run make setup first');
   });
-  for (const key of ['API_PORT', 'DASHBOARD_PORT', 'RELAY_PORT']) {
+  for (const key of [
+    'API_PORT',
+    'DASHBOARD_PORT',
+    'RELAY_PORT',
+    'PUBLIC_PORT',
+  ]) {
     await assertPortAvailable(ports[key], key);
   }
   controller.signal.throwIfAborted();
@@ -89,7 +95,7 @@ try {
 
   await waitUntilReady(ports, agentPath, controller.signal);
   console.log(
-    `Portway development ready\nAPI       http://127.0.0.1:${ports.API_PORT}/health\nDashboard http://127.0.0.1:${ports.DASHBOARD_PORT}\nRelay     127.0.0.1:${ports.RELAY_PORT} (TLS authenticated, registration verified)`,
+    `Portway development ready\nAPI       http://127.0.0.1:${ports.API_PORT}/health\nDashboard http://127.0.0.1:${ports.DASHBOARD_PORT}\nRelay     127.0.0.1:${ports.RELAY_PORT} (TLS authenticated, registration verified)\nHTTPS     127.0.0.1:${ports.PUBLIC_PORT} (TLS verified)`,
   );
   await new Promise((resolve) => {
     if (controller.signal.aborted) resolve();
@@ -140,6 +146,7 @@ async function waitUntilReady(ports, agentPath, signal) {
       await dashboard.body?.cancel();
       if (api.ok && health.data?.status === 'ok' && dashboard.ok) {
         await probeRelay(ports.RELAY_PORT, agentPath, signal);
+        await probeHTTPS(ports.PUBLIC_PORT, signal);
         return;
       }
     } catch {
@@ -150,6 +157,37 @@ async function waitUntilReady(ports, agentPath, signal) {
   throw new Error(
     'API, dashboard, or relay did not become ready within 60 seconds',
   );
+}
+
+async function probeHTTPS(port, signal) {
+  const ca = await readFile(
+    resolve(root, process.env.PUBLIC_TLS_CA_FILE ?? '.tmp/dev/public-ca.pem'),
+  );
+  const hostname = `readiness.${process.env.PUBLIC_BASE_DOMAIN ?? 'portway.localhost'}`;
+  await new Promise((resolve, reject) => {
+    const probe = httpsRequest(
+      {
+        hostname: '127.0.0.1',
+        port,
+        servername: hostname,
+        headers: { Host: hostname },
+        ca,
+        minVersion: 'TLSv1.3',
+        timeout: 2000,
+        signal,
+      },
+      (response) => {
+        response.resume();
+        if (response.statusCode === 404) resolve();
+        else reject(new Error('Public HTTPS routing probe failed'));
+      },
+    );
+    probe.on('timeout', () =>
+      probe.destroy(new Error('Public HTTPS probe timed out')),
+    );
+    probe.on('error', reject);
+    probe.end();
+  });
 }
 
 async function probeRelay(port, agentPath, signal) {

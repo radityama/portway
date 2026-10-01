@@ -19,6 +19,7 @@ export function developmentPorts(source) {
     API_PORT: 8080,
     DASHBOARD_PORT: 3000,
     RELAY_PORT: 8081,
+    PUBLIC_PORT: 8443,
     POSTGRES_PORT: 5432,
     REDIS_PORT: 6379,
   };

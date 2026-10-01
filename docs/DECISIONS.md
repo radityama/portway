@@ -28,6 +28,19 @@ base domain; collisions fail closed. This is local ephemeral state, with no new
 durable entity or hot-path API/database dependency. Client counters persist in
 private local files; cross-relay ownership and automatic reconnect are later work.
 
+## ADR-009: Initial HTTP Stream Transport
+
+HTTP registrations negotiate multiplexing and receive a relay-assigned HTTPS
+URL. Public Host/SNI validation selects a local active owner; stream metadata
+cannot select an upstream address. The agent only dials its configured loopback
+port. Frames, headers, bodies, stream counts, sockets, and deadlines are bounded.
+Synchronous pipe delivery uses no growing receive queue but lets a slow stream
+block the shared reader; independent credit windows are Phase 5. FIN preserves
+half-close and RESET cancels both directions, without transparent replay.
+Development public TLS uses a separate local CA/certificate set so upgrading
+from Phase 3 preserves existing agent credentials. No dependency or durable
+schema change is needed.
+
 ## ADR-001: Go for Agent and Relay
 
 Go is the baseline implementation language for the data plane because it provides a strong networking standard library, straightforward concurrency, and easy cross-platform distribution.

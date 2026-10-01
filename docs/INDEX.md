@@ -20,6 +20,7 @@
 - [Phase 1](./PHASE_1.md) — protocol framing, negotiation, compatibility, and failure tests
 - [Phase 2](./PHASE_2.md) — authenticated TLS connections, credential verification, and lifecycle tests
 - [Phase 3](./PHASE_3.md) — tunnel registration, hostname resolution, generation ownership, and replacement tests
+- [Phase 4](./PHASE_4.md) — public HTTPS, HTTP stream forwarding, limits, and cancellation tests
 
 ## Contract hierarchy
 

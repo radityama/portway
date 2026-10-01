@@ -208,6 +208,14 @@ curl https://<tunnel-hostname>/
 
 returns the localhost service response.
 
+Phase 4 implements the HTTPS listener, validated Host/SNI routing, HTTP stream
+metadata, bounded multiplexing, fixed loopback dialing, and streaming responses.
+The CLI emits a public URL and forwarding readiness; the development supervisor
+also verifies public TLS. Request cancellation, deadlines, replacement, and
+shutdown close streams and local sockets. See [PHASE_4.md](./PHASE_4.md) for
+acceptance checks and limits. Synchronous bounded delivery currently couples
+slow streams on a shared connection; independent credit windows remain Phase 5.
+
 ## 9. Phase 5 — Flow Control
 
 Implement:

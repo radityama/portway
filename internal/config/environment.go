@@ -15,21 +15,30 @@ var ErrEnvironment = errors.New("invalid Portway connection environment")
 type Lookup func(string) (string, bool)
 
 type Relay struct {
-	PublicBaseDomain    string
-	MaxTunnels          int
-	RegistrationTimeout time.Duration
-	Address             string
-	CertFile            string
-	KeyFile             string
-	CredentialsFile     string
-	MaxConnections      int
-	MaxFrame            uint32
-	HandshakeTimeout    time.Duration
-	IdleTimeout         time.Duration
-	WriteTimeout        time.Duration
+	PublicBaseDomain     string
+	MaxTunnels           int
+	RegistrationTimeout  time.Duration
+	Address              string
+	CertFile             string
+	KeyFile              string
+	CredentialsFile      string
+	MaxConnections       int
+	MaxFrame             uint32
+	HandshakeTimeout     time.Duration
+	IdleTimeout          time.Duration
+	WriteTimeout         time.Duration
+	PublicAddress        string
+	PublicPort           int
+	PublicCertFile       string
+	PublicKeyFile        string
+	MaxPublicConnections int
+	MaxStreams           int
+	StreamTimeout        time.Duration
 }
 
 type Agent struct {
+	MaxStreams          int
+	StreamTimeout       time.Duration
 	TunnelID            string
 	StateDir            string
 	Generation          protocol.Generation
@@ -81,6 +90,29 @@ func RelayEnvironment(env Lookup) (Relay, error) {
 		return Relay{}, ErrEnvironment
 	}
 	cfg.MaxConnections = maxConnections
+	cfg.PublicPort, err = strconv.Atoi(value(env, "PUBLIC_PORT", "8443"))
+	publicHost := value(env, "PUBLIC_BIND_HOST", "127.0.0.1")
+	if err != nil || cfg.PublicPort < 1 || cfg.PublicPort > 65535 || strconv.Itoa(cfg.PublicPort) == p || net.ParseIP(publicHost) == nil {
+		return Relay{}, ErrEnvironment
+	}
+	cfg.PublicAddress = net.JoinHostPort(publicHost, strconv.Itoa(cfg.PublicPort))
+	cfg.PublicCertFile = value(env, "PUBLIC_TLS_CERT_FILE", ".tmp/dev/public-cert.pem")
+	cfg.PublicKeyFile = value(env, "PUBLIC_TLS_KEY_FILE", ".tmp/dev/public-key.pem")
+	if cfg.PublicCertFile == "" || cfg.PublicKeyFile == "" {
+		return Relay{}, ErrEnvironment
+	}
+	cfg.MaxPublicConnections, err = strconv.Atoi(value(env, "PUBLIC_MAX_CONNECTIONS", "128"))
+	if err != nil || cfg.MaxPublicConnections < 1 || cfg.MaxPublicConnections > 10000 {
+		return Relay{}, ErrEnvironment
+	}
+	cfg.MaxStreams, err = strconv.Atoi(value(env, "RELAY_MAX_STREAMS", "32"))
+	if err != nil || cfg.MaxStreams < 1 || cfg.MaxStreams > 1024 {
+		return Relay{}, ErrEnvironment
+	}
+	cfg.StreamTimeout, err = duration(env, "RELAY_STREAM_TIMEOUT", "30s")
+	if err != nil {
+		return Relay{}, err
+	}
 	cfg.PublicBaseDomain = value(env, "PUBLIC_BASE_DOMAIN", "portway.localhost")
 	if !protocol.ValidHostname(cfg.PublicBaseDomain) || len(cfg.PublicBaseDomain) > 218 {
 		return Relay{}, ErrEnvironment
@@ -118,6 +150,14 @@ func AgentEnvironment(env Lookup) (Agent, error) {
 		return Agent{}, err
 	}
 	cfg := Agent{Address: value(env, "PORTWAY_RELAY_ADDR", net.JoinHostPort("127.0.0.1", p)), CAFile: value(env, "PORTWAY_RELAY_CA_FILE", ".tmp/dev/ca.pem"), TokenFile: value(env, "PORTWAY_TOKEN_FILE", ".tmp/dev/agent-token")}
+	cfg.MaxStreams, err = strconv.Atoi(value(env, "PORTWAY_MAX_STREAMS", "32"))
+	if err != nil || cfg.MaxStreams < 1 || cfg.MaxStreams > 1024 {
+		return Agent{}, ErrEnvironment
+	}
+	cfg.StreamTimeout, err = duration(env, "PORTWAY_STREAM_TIMEOUT", "30s")
+	if err != nil {
+		return Agent{}, err
+	}
 	cfg.TunnelID = value(env, "PORTWAY_TUNNEL_ID", "tnl_local_dev")
 	cfg.StateDir = value(env, "PORTWAY_STATE_DIR", ".tmp/agent-state")
 	if !protocol.ValidTunnelID(cfg.TunnelID) || cfg.StateDir == "" {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,10 +36,12 @@ type Client struct {
 	IdleTimeout         time.Duration
 	WriteTimeout        time.Duration
 	MaxFrame            uint32
+	MaxStreams          int
+	StreamTimeout       time.Duration
 }
 
 func NewClient(dialer transport.Transport) *Client {
-	return &Client{Transport: dialer, HandshakeTimeout: 10 * time.Second, RegistrationTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxFrame: protocol.MaxPayloadSize}
+	return &Client{Transport: dialer, HandshakeTimeout: 10 * time.Second, RegistrationTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxFrame: protocol.MaxPayloadSize, MaxStreams: 32, StreamTimeout: 30 * time.Second}
 }
 
 type Session struct {
@@ -53,11 +56,19 @@ type Session struct {
 	writeTimeout        time.Duration
 	stop                func() bool
 	closeOnce           sync.Once
+	multiplexing        bool
+	httpRegistered      bool
+	registeredHost      string
+	maxStreams          int
+	streamTimeout       time.Duration
 	// 0 authenticated, 1 registering, 2 registered, 3 waiting, 4 closed.
 	state atomic.Uint32
 }
 
 func (c *Client) Connect(ctx context.Context, address, token string) (*Session, error) {
+	if c.MaxStreams < 1 || c.MaxStreams > 1024 || c.StreamTimeout <= 0 {
+		return nil, ErrConfig
+	}
 	if c.Transport == nil || c.HandshakeTimeout <= 0 || c.RegistrationTimeout <= 0 || c.IdleTimeout <= 0 || c.WriteTimeout <= 0 || c.MaxFrame < protocol.MaxHandshakePayloadSize || c.MaxFrame > protocol.MaxPayloadSize || !protocol.ValidToken(token) {
 		return nil, ErrConfig
 	}
@@ -89,7 +100,7 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		}
 		return frame.EncodeWithLimit(conn, limit)
 	}
-	offer := protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{}, MaxPayloadSize: c.MaxFrame}
+	offer := protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing}, MaxPayloadSize: c.MaxFrame}
 	frame, err := protocol.EncodeHello(offer)
 	if err != nil {
 		return nil, err
@@ -144,7 +155,7 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		return nil, err
 	}
 	keep = true
-	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop}, nil
+	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
 }
 
 // Wait owns the session reader until closure. Closing the session or cancelling
@@ -168,6 +179,9 @@ func (s *Session) Wait() error {
 // Register serializes the request/ACK exchange against Wait and other calls.
 // Any I/O/protocol failure closes the session; partial operations cannot retry.
 func (s *Session) Register(ctx context.Context, request protocol.Register) (protocol.RegisterOK, error) {
+	if request.Protocol == "http" && !s.multiplexing {
+		return protocol.RegisterOK{}, protocol.ErrInvalidHandshake
+	}
 	frame, err := protocol.EncodeRegister(request)
 	if err != nil {
 		return protocol.RegisterOK{}, err
@@ -225,6 +239,8 @@ func (s *Session) Register(ctx context.Context, request protocol.Register) (prot
 	if err := s.conn.SetDeadline(time.Time{}); err != nil {
 		return protocol.RegisterOK{}, err
 	}
+	s.httpRegistered = request.Protocol == "http"
+	s.registeredHost = ack.PublicHostname
 	if !s.state.CompareAndSwap(1, 2) {
 		return protocol.RegisterOK{}, net.ErrClosed
 	}

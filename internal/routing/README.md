@@ -1,5 +1,7 @@
 # routing
 
 Phase 3 ownership lives in `internal/relay/registry.go`: canonical hostname lookup,
-strict generation replacement, and owner-aware cleanup. Public ingress/stream
-routing is Phase 4. Read [ROUTING.md](../../docs/ROUTING.md) before adding it.
+strict generation replacement, and owner-aware cleanup. Phase 4 public ingress
+lives in `internal/relay/http.go`; bounded stream transport lives in `internal/mux`.
+Host/SNI select an active registered owner; no request chooses an upstream address.
+Read [ROUTING.md](../../docs/ROUTING.md) for forwarding policy and limits.

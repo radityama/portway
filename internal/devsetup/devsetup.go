@@ -25,7 +25,17 @@ import (
 var ErrSetup = errors.New("development credentials are incomplete; regenerate with dev-init --force")
 var filenames = []string{"ca.pem", "relay-cert.pem", "relay-key.pem", "agent-token", "relay-credentials.json"}
 
-func Ensure(dir string, force bool) error {
+func Ensure(dir string, force bool) error { return ensureFiles(dir, force, filenames, generate) }
+func EnsurePublic(dir string, force bool) error {
+	return ensureFiles(dir, force, []string{"public-ca.pem", "public-cert.pem", "public-key.pem"}, func() (map[string][]byte, error) {
+		files, err := generate()
+		if err != nil {
+			return nil, err
+		}
+		return map[string][]byte{"public-ca.pem": files["ca.pem"], "public-cert.pem": files["relay-cert.pem"], "public-key.pem": files["relay-key.pem"]}, nil
+	})
+}
+func ensureFiles(dir string, force bool, names []string, generateFiles func() (map[string][]byte, error)) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return ErrSetup
 	}
@@ -39,7 +49,7 @@ func Ensure(dir string, force bool) error {
 	}
 	defer func() { _ = lock.Close(); _ = os.Remove(lock.Name()) }()
 	existing := 0
-	for _, name := range filenames {
+	for _, name := range names {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err == nil {
 			if !info.Mode().IsRegular() {
@@ -50,13 +60,13 @@ func Ensure(dir string, force bool) error {
 			return ErrSetup
 		}
 	}
-	if !force && existing == len(filenames) {
+	if !force && existing == len(names) {
 		return nil
 	}
 	if !force && existing > 0 {
 		return ErrSetup
 	}
-	files, err := generate()
+	files, err := generateFiles()
 	if err != nil {
 		return ErrSetup
 	}
@@ -65,12 +75,12 @@ func Ensure(dir string, force bool) error {
 		return ErrSetup
 	}
 	defer os.RemoveAll(staging)
-	for _, name := range filenames {
+	for _, name := range names {
 		if err := os.WriteFile(filepath.Join(staging, name), files[name], 0600); err != nil {
 			return ErrSetup
 		}
 	}
-	for _, name := range filenames {
+	for _, name := range names {
 		if err := os.Rename(filepath.Join(staging, name), filepath.Join(dir, name)); err != nil {
 			return ErrSetup
 		}
@@ -101,7 +111,7 @@ func generate() (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	leaf := &x509.Certificate{SerialNumber: relaySerial, Subject: pkix.Name{CommonName: "localhost"}, DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}, NotBefore: now.Add(-5 * time.Minute), NotAfter: ca.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leaf := &x509.Certificate{SerialNumber: relaySerial, Subject: pkix.Name{CommonName: "localhost"}, DNSNames: []string{"localhost", "*.portway.localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}, NotBefore: now.Add(-5 * time.Minute), NotAfter: ca.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, ca, &relayKey.PublicKey, caKey)
 	if err != nil {
 		return nil, err

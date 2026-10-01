@@ -31,6 +31,7 @@ fuzz:
 	go test ./internal/protocol -run '^$$' -fuzz '^FuzzDecode$$' -fuzztime=$(FUZZTIME) -parallel=2
 	go test ./internal/protocol -run '^$$' -fuzz '^FuzzFrameRoundTrip$$' -fuzztime=$(FUZZTIME) -parallel=2
 	go test ./internal/protocol -run '^$$' -fuzz '^FuzzHandshake$$' -fuzztime=$(FUZZTIME) -parallel=2
+	go test ./internal/protocol -run '^$$' -fuzz '^FuzzStreamPayloads$$' -fuzztime=$(FUZZTIME) -parallel=2
 
 lint:
 	go vet ./...

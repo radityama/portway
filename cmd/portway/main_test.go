@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,11 +41,27 @@ func cliFixture(t *testing.T) (config.Lookup, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	public, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		listener.Close()
+		t.Fatal(err)
+	}
+	server.PublicPort = public.Addr().(*net.TCPAddr).Port
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx, listener) }()
+	publicDone := make(chan error, 1)
+	go func() { publicDone <- server.ServeHTTPS(ctx, public, server.TLSConfig) }()
 	t.Cleanup(func() {
 		cancel()
+		select {
+		case err := <-publicDone:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("public CLI fixture did not stop")
+		}
 		select {
 		case err := <-done:
 			if err != nil {
@@ -59,6 +78,71 @@ func cliFixture(t *testing.T) (config.Lookup, string) {
 		t.Fatal(err)
 	}
 	return lookup, token
+}
+
+type readyWriter struct {
+	bytes.Buffer
+	ready chan Event
+}
+
+func (w *readyWriter) Write(data []byte) (int, error) {
+	n, err := w.Buffer.Write(data)
+	var event Event
+	if json.Unmarshal(data, &event) == nil && event.Event == "ready" {
+		w.ready <- event
+	}
+	return n, err
+}
+func TestCLIReadyURLActuallyForwardsHTTPS(t *testing.T) {
+	env, token := cliFixture(t)
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "from-the-local-service") }))
+	defer local.Close()
+	_, port, _ := net.SplitHostPort(local.Listener.Addr().String())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stdout := &readyWriter{ready: make(chan Event, 1)}
+	var stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() { done <- run(ctx, []string{port}, env, stdout, &stderr) }()
+	var event Event
+	select {
+	case event = <-stdout.ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CLI never became ready")
+	}
+	ca, _ := env("PORTWAY_RELAY_CA_FILE")
+	config, err := transport.ClientConfig(ca, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &tls.Config{RootCAs: config.RootCAs, MinVersion: tls.VersionTLS13}
+	remote := &http.Transport{TLSClientConfig: cfg, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		_, p, _ := net.SplitHostPort(address)
+		return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, network, net.JoinHostPort("127.0.0.1", p))
+	}}
+	defer remote.CloseIdleConnections()
+	client := &http.Client{Transport: remote, Timeout: 2 * time.Second}
+	response, err := client.Get(event.PublicURL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || string(data) != "from-the-local-service" {
+		t.Fatal("ready URL did not forward")
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatal("CLI did not shut down cleanly")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CLI workers did not stop")
+	}
+	if strings.Contains(stdout.String(), token) || stderr.Len() != 0 {
+		t.Fatal("CLI leaked credentials or human logs into JSON")
+	}
 }
 
 func TestRegisteredCLIJSONAndPersistedGeneration(t *testing.T) {

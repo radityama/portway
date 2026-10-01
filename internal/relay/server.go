@@ -10,10 +10,13 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"slices"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/radityama/portway/internal/auth"
+	"github.com/radityama/portway/internal/mux"
 	"github.com/radityama/portway/internal/protocol"
 	"github.com/radityama/portway/internal/transport"
 )
@@ -22,35 +25,41 @@ var ErrConfig = errors.New("invalid relay TLS/authentication configuration")
 var ErrCapacity = errors.New("relay connection limit reached")
 
 type Server struct {
-	Logger              *slog.Logger
-	TLSConfig           *tls.Config
-	Authenticator       auth.Verifier
-	MaxConnections      int
-	HandshakeTimeout    time.Duration
-	RegistrationTimeout time.Duration
-	PublicBaseDomain    string
-	MaxTunnels          int
-	ReadIdleTimeout     time.Duration
-	WriteTimeout        time.Duration
-	MaxStreams          uint32
-	MaxFrame            uint32
-	mu                  sync.RWMutex
-	sessions            map[string]*registryEntry
-	hostnames           map[string]string
-	active              map[net.Conn]struct{}
+	Logger               *slog.Logger
+	TLSConfig            *tls.Config
+	Authenticator        auth.Verifier
+	MaxConnections       int
+	MaxPublicConnections int
+	HandshakeTimeout     time.Duration
+	RegistrationTimeout  time.Duration
+	PublicBaseDomain     string
+	PublicPort           int
+	StreamTimeout        time.Duration
+	MaxTunnels           int
+	ReadIdleTimeout      time.Duration
+	WriteTimeout         time.Duration
+	MaxStreams           uint32
+	MaxFrame             uint32
+	mu                   sync.RWMutex
+	sessions             map[string]*registryEntry
+	hostnames            map[string]string
+	active               map[net.Conn]struct{}
 }
 
 func NewServer(logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &Server{Logger: logger, MaxConnections: 128, HandshakeTimeout: 10 * time.Second,
+	return &Server{Logger: logger, MaxConnections: 128, MaxPublicConnections: 128, HandshakeTimeout: 10 * time.Second,
 		RegistrationTimeout: 10 * time.Second, PublicBaseDomain: "portway.localhost", MaxTunnels: 1024,
-		ReadIdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxStreams: 1024,
+		ReadIdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxStreams: 32, StreamTimeout: 30 * time.Second,
 		MaxFrame: protocol.MaxPayloadSize, sessions: make(map[string]*registryEntry), hostnames: make(map[string]string), active: make(map[net.Conn]struct{})}
 }
 
 func (s *Server) validate() error {
+	if s.PublicPort < 0 || s.PublicPort > 65535 || s.MaxStreams < 1 || s.MaxStreams > 1024 || s.StreamTimeout <= 0 {
+		return ErrConfig
+	}
 	if s.TLSConfig == nil || len(s.TLSConfig.Certificates) == 0 || s.TLSConfig.MinVersion < tls.VersionTLS13 || (s.TLSConfig.MaxVersion != 0 && s.TLSConfig.MaxVersion < tls.VersionTLS13) || s.Authenticator == nil || s.MaxConnections < 1 || s.MaxConnections > 10000 || s.MaxFrame < protocol.MaxHandshakePayloadSize || s.MaxFrame > protocol.MaxPayloadSize || s.HandshakeTimeout <= 0 || s.ReadIdleTimeout <= 0 || s.WriteTimeout <= 0 {
 		return ErrConfig
 	}
@@ -158,7 +167,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	if err != nil || remote.MaxPayloadSize < protocol.MaxHandshakePayloadSize {
 		return protocol.ErrInvalidHandshake
 	}
-	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{}, MaxPayloadSize: s.MaxFrame})
+	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing}, MaxPayloadSize: s.MaxFrame})
 	if err != nil {
 		return err
 	}
@@ -233,13 +242,32 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 		_ = s.rejectRegistration(conn, protocol.RegisterInvalid, ack.MaxPayloadSize, registrationDeadline)
 		return protocol.ErrInvalidHandshake
 	}
+	if request.Protocol == "http" && (s.PublicPort == 0 || !slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing)) {
+		_ = s.rejectRegistration(conn, protocol.RegisterInvalid, ack.MaxPayloadSize, registrationDeadline)
+		return protocol.ErrInvalidHandshake
+	}
+	var streams *mux.Conn
+	if request.Protocol == "http" {
+		streams, err = mux.New(ctx, conn, reader, mux.Options{MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt})
+		if err != nil {
+			return err
+		}
+		defer streams.Close()
+	}
 	owner, code := s.register(ctx, identity, connectionID, request, raw)
 	if code != "" {
 		_ = s.rejectRegistration(conn, code, ack.MaxPayloadSize, registrationDeadline)
 		return errors.New(code)
 	}
 	defer s.unregister(owner)
-	frame, err = protocol.EncodeRegisterOK(protocol.RegisterOK{TunnelID: owner.TunnelID, ConnectionID: owner.ConnectionID, Generation: owner.Generation, PublicHostname: owner.PublicHostname})
+	publicURL := ""
+	if streams != nil {
+		publicURL = "https://" + owner.PublicHostname
+		if s.PublicPort != 443 {
+			publicURL += ":" + strconv.Itoa(s.PublicPort)
+		}
+	}
+	frame, err = protocol.EncodeRegisterOK(protocol.RegisterOK{TunnelID: owner.TunnelID, ConnectionID: owner.ConnectionID, Generation: owner.Generation, PublicHostname: owner.PublicHostname, PublicURL: publicURL})
 	if err != nil {
 		return err
 	}
@@ -247,6 +275,14 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 		return err
 	}
 	s.Logger.Info("relay_registered", "tunnel_id", owner.TunnelID, "connection_id", owner.ConnectionID, "generation", owner.Generation.String(), "hostname", owner.PublicHostname)
+	if streams != nil {
+		s.mu.Lock()
+		if s.sessions[owner.TunnelID] == owner {
+			owner.streams = streams
+		}
+		s.mu.Unlock()
+		return streams.Run()
+	}
 	readDeadline := earlier(time.Now().Add(s.ReadIdleTimeout), identity.ExpiresAt)
 	if ctxDeadline, ok := ctx.Deadline(); ok {
 		readDeadline = earlier(readDeadline, ctxDeadline)
@@ -254,7 +290,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	if err := conn.SetReadDeadline(readDeadline); err != nil {
 		return err
 	}
-	// Later phases implement active-session traffic. Reject unexpected headers
+	// Diagnostic registrations do not serve streams. Reject unexpected headers
 	// before allocating/reading a body, including a second REGISTER.
 	_, err = protocol.DecodeTypes(reader, ack.MaxPayloadSize)
 	if ctx.Err() != nil {

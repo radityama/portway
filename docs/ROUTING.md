@@ -127,9 +127,12 @@ only a strictly newer generation. REGISTER/REGISTER_OK/REGISTER_ERROR schemas an
 bounds are in [PROTOCOL.md](./PROTOCOL.md). Authentication alone grants no route.
 
 `relay.Server.Lookup` resolves a canonical lowercase DNS hostname to an immutable
-snapshot of the active, unexpired owner. It rejects ports, URLs and trailing dots;
-future HTTP ingress owns Host/SNI parsing. Phase 3 has no public listener or stream
-forwarding. Public request routing begins in Phase 4.
+snapshot of the active, unexpired owner. It rejects ports, URLs and trailing dots.
+Phase 4's HTTPS ingress validates Host authority, permits only its configured
+numeric port, and requires matching TLS SNI before looking up that canonical
+hostname. Unknown hostnames return 404; known offline or diagnostic-only owners
+return 503. HTTP registration requires negotiated multiplexing and a public
+listener, and its ACK includes the assigned HTTPS URL.
 
 Hostnames use `p-` plus the first 128 bits of SHA-256(tunnel ID), under operator
 configured PUBLIC_BASE_DOMAIN. They are stable per tunnel/base domain. Peers may
@@ -156,6 +159,31 @@ the relay MUST:
 8. stream request bytes
 9. stream response bytes
 10. close/reset the stream correctly
+
+Phase 4 preserves the method and origin-form path/query. The local Host is the
+assigned canonical hostname without its public port. `X-Forwarded-Host` carries
+the public authority including the port, `X-Forwarded-Proto` is `https`, and
+`X-Forwarded-For` is the immediate client's IP. Incoming `Forwarded` and
+`X-Forwarded-*` values are discarded before rebuilding these three headers.
+Hop-by-hop headers, Connection-nominated headers, and proxy credentials are
+removed in both directions. Application Authorization/Cookie headers pass to the
+selected service and are never logged. Repeated response headers, including
+Set-Cookie, are preserved. Redirects are returned without being followed.
+
+The stream carries HTTP request metadata and request body bytes to a fixed
+loopback TCP endpoint; public metadata never chooses that endpoint. The agent
+returns a serialized HTTP/1.1 response and streams its body. FIN closes only the
+sender's direction; RESET aborts both directions and closes local TCP work.
+Unsupported CONNECT, upgrades, and trailers fail before forwarding. HTTP/2,
+WebSocket support, and configurable Host rewriting remain later work.
+
+Phase 4 limits request bodies to 16 MiB, responses to 64 MiB, HTTP metadata to
+32 KiB and 128 header pairs, DATA to 16 KiB, and concurrent streams to 32 by
+default. Whole-stream deadlines default to 30 seconds; public TLS/header reads
+have a 5-second deadline. Stream saturation returns 503, local dial/invalid
+upstream failures 502, deadlines 504, oversized requests 413, and oversized
+metadata 431. SNI mismatches return 421. A body failure after response headers
+have been sent aborts the response rather than replacing its status.
 
 ## 8. Stream Mapping
 

@@ -11,6 +11,10 @@ import {
   MAX_PAYLOAD_SIZE,
   MAX_TUNNEL_ID_SIZE,
   REGISTER_ERROR_CODES,
+  MAX_DATA_SIZE,
+  MAX_OPEN_PAYLOAD_SIZE,
+  MAX_HTTP_HEADER_SIZE,
+  STREAM_ERROR_CODES,
   PROTOCOL_VERSION,
 } from '../src/index.ts';
 
@@ -38,6 +42,32 @@ test('TypeScript shares the Go wire constants and bounded handshake contract', (
       ]),
     ),
   );
+});
+
+test('HTTP stream fixtures share limits and canonical metadata', () => {
+  const payload = (name: string) =>
+    JSON.parse(
+      Buffer.from(
+        fixtures.frames.find((frame: { name: string }) => frame.name === name)
+          .payload_hex,
+        'hex',
+      ).toString('utf8'),
+    );
+  assert.equal(MAX_DATA_SIZE, 16384);
+  assert.equal(MAX_OPEN_PAYLOAD_SIZE, 65536);
+  assert.equal(MAX_HTTP_HEADER_SIZE, 32768);
+  assert.deepEqual(payload('OPEN_STREAM'), {
+    method: 'POST',
+    target: '/echo?x=1',
+    host: 'p-abc.portway.localhost',
+    headers: [['Content-Type', 'application/json']],
+    content_length: 3,
+  });
+  assert.equal(
+    payload('OPEN_STREAM_ERROR').code,
+    STREAM_ERROR_CODES.UNAVAILABLE,
+  );
+  assert.equal(payload('RESET_STREAM').code, STREAM_ERROR_CODES.CANCELLED);
 });
 
 test('registration preserves all 64 generation bits and shares error codes', () => {

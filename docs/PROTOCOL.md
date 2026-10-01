@@ -5,6 +5,8 @@
 Protocol v1 framing and capability negotiation are implemented in Phase 1.
 Session handshakes and transport ownership are implemented in Phase 2.
 Tunnel registration and generation ownership are implemented in Phase 3.
+HTTP stream metadata, bounded multiplexing, and half-close/reset are implemented
+in Phase 4. Credit-based WINDOW_UPDATE remains Phase 5.
 
 ## Transport
 
@@ -212,8 +214,8 @@ authenticated → REGISTER → REGISTER_OK → registered
 
 All three registration frames use stream ID 0 and have a 4096-byte payload cap.
 Each connection may register exactly once. REGISTER before authentication, any
-other frame while awaiting registration, and any frame after registration are
-rejected at the header until later phases implement active-session messages.
+other frame while awaiting registration, and active messages on diagnostic registrations are
+rejected at the header. HTTP registrations enable the stream messages defined below.
 
 ```json
 { "tunnel_id": "tnl_local_dev", "generation": "1" }
@@ -262,6 +264,48 @@ control-plane assigned domains remain later phases. The CLI reserves increasing
 generations in a private local state directory before registration. Failed attempts
 consume numbers; gaps are valid. Losing local state requires operator recovery to
 a generation above the relay watermark; counters never silently reset on corruption.
+
+## HTTP streams (Phase 4)
+
+HELLO negotiates `multiplexing` for HTTP forwarding. REGISTER may include
+`"protocol":"http"`; omission keeps a registration diagnostic. REGISTER_OK may
+include `public_url`, a validated HTTPS URL whose host matches public_hostname.
+HTTP ownership becomes routable only after REGISTER_OK is written. The agent
+then serves streams to its explicitly configured numeric loopback TCP endpoint.
+
+Only the relay allocates stream IDs, monotonically from 1 without reuse. An agent
+accepts OPEN_STREAM with JSON fields `method`, `target`, `host`, `headers`, and
+`content_length`. Headers are arrays of two strings; names are canonical HTTP
+tokens, with at most 128 pairs and 32 KiB total metadata. Target is an origin-form
+path/query, at most 8192 bytes, never an absolute URL or upstream destination.
+Host is the registered canonical hostname. Content length is -1 (unknown) or
+0..16777216. CONNECT and upgrades are rejected; WebSocket support is Phase 8.
+OPEN_STREAM payloads are capped at 64 KiB before allocation. Other stream control
+payloads are capped at 4096 bytes, DATA at 16 KiB (or the smaller negotiated limit).
+
+OPEN_STREAM_OK contains `{}` and is sent after local TCP dialing succeeds.
+OPEN_STREAM_ERROR and RESET_STREAM contain only `code`: UPSTREAM_UNAVAILABLE,
+STREAM_LIMIT, STREAM_TIMEOUT, STREAM_CANCELLED, BODY_LIMIT, or STREAM_INVALID.
+DATA before OPEN_STREAM_OK, after a directional close, or on an unknown future ID
+is a protocol error. Delayed frames for already released IDs are discarded, with
+no retained per-stream tombstones. Peer OPEN IDs must strictly increase.
+
+Agent-bound DATA carries HTTP request body bytes; the agent constructs the local
+HTTP/1.1 request from OPEN metadata. Relay-bound DATA carries one serialized
+HTTP/1.1 response, including headers and a streamed body. CLOSE_STREAM contains
+`{}` and half-closes the sender's direction; RESET_STREAM aborts both directions
+and closes the local TCP socket. Each stream is independent of request replay.
+HTTP hop-by-hop/proxy headers are stripped, forwarding headers are rebuilt, Host
+is preserved, redirects are returned to the client, and trailers are unsupported
+in this phase. The local connection serves one request and closes after response.
+
+Phase 4 uses synchronous pipe delivery for DATA: at most one decoded 16 KiB DATA
+payload per connection, no unbounded queue. Slow readers can block other streams
+on the same connection until cancellation/deadline; Phase 5 adds per-stream
+credit windows to remove this head-of-line coupling. Stream concurrency is capped
+(default 32 per tunnel), with a 30s whole-stream deadline. All frame writes,
+including waiting for the writer, have deadlines. Connection/credential expiry
+closes all pipes, local sockets, and owned workers. WINDOW_UPDATE is not enabled.
 
 ## Invariants
 

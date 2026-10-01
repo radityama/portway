@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–3 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, and tunnel registration. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. The API and dashboard are skeletons. Public HTTP forwarding is Phase 4.
+Phases 0–4 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses stream through bounded logical streams. The API and dashboard are skeletons.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -24,19 +24,20 @@ make setup
 make dev
 ```
 
-`make setup` creates `.env` if missing, installs dependencies from the lockfile, generates the Prisma client, and creates local TLS/credential files in ignored `.tmp/dev`. Existing environment and credential files are preserved. Shell variables take precedence.
+`make setup` creates `.env` if missing, installs dependencies from the lockfile, generates the Prisma client, and creates local TLS/credential files in ignored `.tmp/dev`. It also creates a separate public CA and wildcard certificate, preserving existing agent credentials. Existing environment and credential files are preserved. Shell variables take precedence.
 
-`make dev` waits for healthy PostgreSQL and Redis, builds the agent/relay, and starts the API, dashboard, and relay. Readiness requires API/dashboard checks and an actual authenticated TLS handshake and tunnel registration with the relay.
+`make dev` waits for healthy PostgreSQL and Redis, builds the agent/relay, and starts the API, dashboard, and relay. Readiness requires API/dashboard checks, an actual authenticated TLS handshake and tunnel registration, and verified public HTTPS.
 
 Default addresses:
 
-| Service    | Address                        |
-| ---------- | ------------------------------ |
-| Dashboard  | `http://127.0.0.1:3000`        |
-| API health | `http://127.0.0.1:8080/health` |
-| Relay      | `127.0.0.1:8081` (TLS 1.3)     |
-| PostgreSQL | `127.0.0.1:5432`               |
-| Redis      | `127.0.0.1:6379`               |
+| Service      | Address                            |
+| ------------ | ---------------------------------- |
+| Dashboard    | `http://127.0.0.1:3000`            |
+| API health   | `http://127.0.0.1:8080/health`     |
+| Relay        | `127.0.0.1:8081` (TLS 1.3)         |
+| Public HTTPS | `https://<assigned-hostname>:8443` |
+| PostgreSQL   | `127.0.0.1:5432`                   |
+| Redis        | `127.0.0.1:6379`                   |
 
 Press Ctrl+C to stop the application processes and remove the development containers and network. PostgreSQL data stays in the `portway_portway-postgres` named volume. Startup failures also clean up resources created by that run. Starting a second development session on the same application ports fails before it touches the running stack.
 
@@ -68,11 +69,26 @@ go run ./cmd/portway 3000
 ```
 
 JSON mode reports `relay_authenticated` followed by `tunnel_registered`, including
-the assigned hostname and a decimal-string generation. Registration assigns a
-hostname; it does not serve public requests yet. `ready` and public URLs arrive
-with Phase 4 forwarding. `register --once` closes its route immediately after
+the assigned hostname and a decimal-string generation. A numeric port invocation
+starts HTTP forwarding and emits `tunnel_connected`, `public_url`, and `ready`.
+Use the printed HTTPS URL to reach the local service. Diagnostic `register` does
+not enable forwarding; `register --once` closes its route immediately after
 the ACK. Held connections end on Ctrl+C, replacement, idle timeout or expiry.
 `connect` without registration is diagnostic and ends on the registration timeout.
+
+For the default development tunnel, with a service listening on port 3000 and
+`portway 3000` running, verify the response from another terminal:
+
+```bash
+portway_host=p-9cbd6a472b3507c67e259cadf5a9ecc5.portway.localhost
+curl --cacert .tmp/dev/public-ca.pem \
+  --resolve "$portway_host:8443:127.0.0.1" \
+  "https://$portway_host:8443/"
+```
+
+For another tunnel or port, use the hostname and port in the printed URL. The
+public development listener binds to loopback. Browsers need a trusted public
+certificate; the setup does not install a system CA. Host and TLS SNI must agree.
 
 The development credential is scoped to `tnl_local_dev`. Operator credentials
 must match `PORTWAY_TUNNEL_ID`. The relay assigns stable hostnames under
@@ -101,6 +117,15 @@ to expose its listener. The agent uses `PORTWAY_RELAY_ADDR`,
 [Phase 2](./docs/PHASE_2.md) for credential format and [Phase 3](./docs/PHASE_3.md)
 for registration settings and relay-restart limits.
 
+Public ingress has its own `PUBLIC_BIND_HOST`, `PUBLIC_PORT`,
+`PUBLIC_TLS_CERT_FILE`, and `PUBLIC_TLS_KEY_FILE`. Exposing it requires DNS and
+a certificate covering the assigned hostnames. Phase 4 supports ordinary HTTP
+with 32 streams per tunnel, 30-second stream deadlines, 16 MiB request bodies,
+64 MiB response bodies, and bounded headers. HTTP/2, upgrades, CONNECT, and
+trailers are not enabled. Slow streams can delay others on their shared agent
+connection; independent flow-control windows arrive in Phase 5. See
+[Phase 4](./docs/PHASE_4.md) for all limits and settings.
+
 ## Quality gates
 
 ```bash
@@ -110,7 +135,7 @@ pnpm db:validate
 pnpm test:bootstrap
 ```
 
-`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, and production builds. `make fuzz` actively fuzzes decoding, encoding round trips, and handshake payloads for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
+`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, and production builds. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, and stream payloads for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
 
 Stop the development stack before running production builds; Next.js uses the same `.next/` directory for both.
 

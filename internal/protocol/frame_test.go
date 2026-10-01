@@ -76,7 +76,7 @@ func TestEveryTruncation(t *testing.T) {
 }
 
 func TestPayloadLimitBoundaries(t *testing.T) {
-	for _, limit := range []uint32{3, MaxPayloadSize} {
+	for _, limit := range []uint32{3, MaxDataSize} {
 		frame := Frame{Version: Version, Type: TypeData, StreamID: 1, Payload: make([]byte, limit)}
 		var buf bytes.Buffer
 		if err := frame.EncodeWithLimit(&buf, limit); err != nil {

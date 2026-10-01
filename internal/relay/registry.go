@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/radityama/portway/internal/auth"
+	"github.com/radityama/portway/internal/mux"
 	"github.com/radityama/portway/internal/protocol"
 )
 
@@ -23,8 +24,9 @@ type Session struct {
 
 type registryEntry struct {
 	Session
-	conn net.Conn
-	ctx  context.Context
+	conn    net.Conn
+	ctx     context.Context
+	streams *mux.Conn
 }
 
 func assignedHostname(tunnelID, base string) string {
@@ -33,7 +35,7 @@ func assignedHostname(tunnelID, base string) string {
 }
 
 // Lookup accepts a canonical hostname, never an HTTP Host header or URL. A
-// future ingress parser owns normalization and port/SNI checks before lookup.
+// public ingress owns normalization and port/SNI checks before lookup.
 func (s *Server) Lookup(hostname string) (Session, bool) {
 	if !protocol.ValidHostname(hostname) {
 		return Session{}, false
@@ -77,12 +79,17 @@ func (s *Server) register(ctx context.Context, identity auth.Identity, connectio
 		return nil, protocol.RegisterConflict
 	}
 	var old net.Conn
+	var oldStreams *mux.Conn
 	if previous != nil {
 		old = previous.conn
+		oldStreams = previous.streams
 	}
 	s.sessions[request.TunnelID] = owner
 	s.hostnames[host] = request.TunnelID
 	s.mu.Unlock()
+	if oldStreams != nil {
+		oldStreams.Close()
+	}
 	if old != nil {
 		_ = old.Close()
 	}

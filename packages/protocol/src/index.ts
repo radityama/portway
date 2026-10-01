@@ -7,6 +7,26 @@ export const MAX_CAPABILITY_NAME_SIZE = 64 as const;
 export const MIN_TOKEN_SIZE = 32 as const;
 export const MAX_TOKEN_SIZE = 512 as const;
 export const MAX_TUNNEL_ID_SIZE = 128 as const;
+export const MAX_DATA_SIZE = 16 * 1024;
+export const MAX_OPEN_PAYLOAD_SIZE = 64 * 1024;
+export const MAX_HTTP_HEADER_SIZE = 32 * 1024;
+export const MAX_REQUEST_BODY_SIZE = 16 * 1024 * 1024;
+export const MAX_RESPONSE_BODY_SIZE = 64 * 1024 * 1024;
+export interface OpenStream {
+  method: string;
+  target: string;
+  host: string;
+  headers: [string, string][];
+  content_length: number;
+}
+export const STREAM_ERROR_CODES = {
+  UNAVAILABLE: 'UPSTREAM_UNAVAILABLE',
+  LIMIT: 'STREAM_LIMIT',
+  TIMEOUT: 'STREAM_TIMEOUT',
+  CANCELLED: 'STREAM_CANCELLED',
+  BODY_LIMIT: 'BODY_LIMIT',
+  INVALID: 'STREAM_INVALID',
+} as const;
 
 export const REGISTER_ERROR_CODES = {
   INVALID: 'REGISTER_INVALID',
@@ -20,10 +40,12 @@ export const REGISTER_ERROR_CODES = {
 export interface Register {
   tunnel_id: string;
   generation: string;
+  protocol?: 'http';
 }
 export interface RegisterOK extends Register {
   connection_id: string;
   public_hostname: string;
+  public_url?: string;
 }
 export interface RegisterError {
   code: (typeof REGISTER_ERROR_CODES)[keyof typeof REGISTER_ERROR_CODES];

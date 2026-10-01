@@ -70,7 +70,7 @@ func (f Frame) validateHeader(length uint64, limit uint32) error {
 	if f.Type == TypeWindowUpdate && length != WindowUpdateSize {
 		return ErrInvalidWindow
 	}
-	if f.Type >= TypeHello && f.Type <= TypePong && length > MaxHandshakePayloadSize {
+	if (f.Type >= TypeHello && f.Type <= TypePong || f.Type == TypeGoAway) && length > MaxHandshakePayloadSize {
 		return ErrPayloadTooLarge
 	}
 	if f.Type == TypeData && length > MaxDataSize || f.Type == TypeOpenStream && length > MaxOpenPayloadSize || f.Type >= TypeOpenStreamOK && f.Type <= TypeResetStream && f.Type != TypeData && length > MaxHandshakePayloadSize {

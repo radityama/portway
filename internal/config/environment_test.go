@@ -3,10 +3,34 @@ package config
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func lookup(values map[string]string) Lookup {
 	return func(key string) (string, bool) { value, ok := values[key]; return value, ok }
+}
+
+func TestShutdownTimeoutBounds(t *testing.T) {
+	a, err := AgentEnvironment(lookup(nil))
+	if err != nil || a.ShutdownTimeout != 10*time.Second {
+		t.Fatal("agent shutdown default differs")
+	}
+	r, err := RelayEnvironment(lookup(nil))
+	if err != nil || r.ShutdownTimeout != 10*time.Second {
+		t.Fatal("relay shutdown default differs")
+	}
+	for _, v := range []string{"0s", "-1s", "61s", "invalid"} {
+		if _, err := AgentEnvironment(lookup(map[string]string{"PORTWAY_SHUTDOWN_TIMEOUT": v})); err == nil {
+			t.Fatal("invalid agent deadline accepted")
+		}
+		if _, err := RelayEnvironment(lookup(map[string]string{"RELAY_SHUTDOWN_TIMEOUT": v})); err == nil {
+			t.Fatal("invalid relay deadline accepted")
+		}
+	}
+	a, err = AgentEnvironment(lookup(map[string]string{"PORTWAY_SHUTDOWN_TIMEOUT": "100ms"}))
+	if err != nil || a.ShutdownTimeout != 100*time.Millisecond {
+		t.Fatal("custom shutdown deadline lost")
+	}
 }
 func TestEnvironmentConfiguration(t *testing.T) {
 	relay, err := RelayEnvironment(lookup(nil))

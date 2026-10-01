@@ -421,6 +421,23 @@ Agent shutdown:
 
 Relay shutdown follows the same draining principle at the node level.
 
+Phase 7 negotiates `graceful_shutdown` on registered HTTP and diagnostic sessions.
+Each direction sends GOAWAY SHUTDOWN after any admitted OPEN is written, then
+GOAWAY DRAINED after its streams and acceptance workers finish. Both DRAINED
+messages are required before graceful transport closure; a local empty stream
+map alone cannot prove a peer consumed its buffered response. Flow control and
+heartbeat continue during drain. Repeated calls cannot extend the deadline.
+
+CLI/relay signal contexts initiate draining separately from hard transport
+lifetimes. The relay closes stream, registration and tunnel-socket admission,
+returns 503 for new public HTTP requests, and waits for admitted handlers through
+upload/response cleanup. At the deadline it closes raw tunnel and public sockets,
+including blocked uploads/writes, before joining workers. Credential expiry,
+protocol failures, supersession and explicit lifetime cancellation still abort.
+Owner-aware unregister retains generation watermarks. Legacy peers receive no
+new messages. No database, API or durable model participates in shutdown.
+See [PHASE_7.md](./PHASE_7.md) for the compatibility and verification boundary.
+
 ## 20. Timeouts
 
 Every network operation needs explicit timeout behavior, including:

@@ -111,6 +111,7 @@ const (
 	StreamCancelled   = "STREAM_CANCELLED"
 	StreamBodyLimit   = "BODY_LIMIT"
 	StreamInvalid     = "STREAM_INVALID"
+	StreamDraining    = "STREAM_DRAINING"
 )
 
 type StreamError struct {
@@ -118,7 +119,7 @@ type StreamError struct {
 }
 
 func validStreamCode(code string) bool {
-	return code == StreamUnavailable || code == StreamLimit || code == StreamTimeout || code == StreamCancelled || code == StreamBodyLimit || code == StreamInvalid
+	return code == StreamUnavailable || code == StreamLimit || code == StreamTimeout || code == StreamCancelled || code == StreamBodyLimit || code == StreamInvalid || code == StreamDraining
 }
 func EncodeStreamControl(typ Type, id uint64, code string) (Frame, error) {
 	var f Frame

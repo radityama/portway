@@ -23,6 +23,7 @@
 - [Phase 4](./PHASE_4.md) — public HTTPS, HTTP stream forwarding, limits, and cancellation tests
 - [Phase 5](./PHASE_5.md) — stream/connection credit, bounded buffering, and slow-consumer isolation
 - [Phase 6](./PHASE_6.md) — heartbeat liveness, reconnect backoff, fresh generations, and no-replay recovery
+- [Phase 7](./PHASE_7.md) — negotiated draining, active work completion, bounded shutdown, and cleanup
 
 ## Contract hierarchy
 

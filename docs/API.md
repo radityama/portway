@@ -312,7 +312,7 @@ Suggested:
 
 Keep exit codes stable for automation.
 
-### Current CLI connection, registration, and forwarding milestones (Phases 2–6)
+### Current CLI connection, registration, and forwarding milestones (Phases 2–7)
 
 `portway connect --once` verifies one authenticated relay handshake and exits.
 `portway connect` holds an unregistered diagnostic connection until interruption,
@@ -363,6 +363,17 @@ Ctrl+C cancels connection work or backoff and emits `shutdown_complete` with
 exit 0. Terminal failures emit `error` and exit 1 without retries. Diagnostics
 remain one-session commands. No request is replayed and no secret/raw network
 error is included in reconnect events.
+
+Phase 7 adds `shutdown_started` for local signal shutdown and `tunnel_draining`
+for peer GOAWAY, each with `relay` and `reason` (`user_shutdown` or
+`peer_shutdown`), plus `connection_id` when a session exists. Handshake/backoff
+shutdown can omit the connection ID. Local shutdown stops reconnect, waits for admitted work up
+to PORTWAY_SHUTDOWN_TIMEOUT (10s by default), then emits `shutdown_complete` and
+exits 0, including forced cleanup at the deadline. Cancellation during handshake
+or backoff remains prompt. Remote drain waits for active work, then schedules
+reconnect with reason `relay_draining`; REGISTER_DRAINING is also retryable.
+Diagnostic registrations drain their connection without reconnecting. Existing
+exit codes remain unchanged. These are CLI/protocol changes; REST is unchanged.
 
 ## 13. Pagination
 

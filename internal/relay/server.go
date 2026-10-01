@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"slices"
 	"strconv"
 	"sync"
@@ -23,6 +24,7 @@ import (
 
 var ErrConfig = errors.New("invalid relay TLS/authentication configuration")
 var ErrCapacity = errors.New("relay connection limit reached")
+var ErrDraining = errors.New("relay draining")
 
 type Server struct {
 	Logger               *slog.Logger
@@ -40,10 +42,17 @@ type Server struct {
 	WriteTimeout         time.Duration
 	MaxStreams           uint32
 	MaxFrame             uint32
+	ShutdownTimeout      time.Duration
 	mu                   sync.RWMutex
 	sessions             map[string]*registryEntry
 	hostnames            map[string]string
 	active               map[net.Conn]struct{}
+	draining             bool
+	httpActive           int
+	httpServers          map[*http.Server]*limitedListener
+	changed              chan struct{}
+	shutdownDone         chan struct{}
+	shutdownErr          error
 }
 
 func NewServer(logger *slog.Logger) *Server {
@@ -53,10 +62,13 @@ func NewServer(logger *slog.Logger) *Server {
 	return &Server{Logger: logger, MaxConnections: 128, MaxPublicConnections: 128, HandshakeTimeout: 10 * time.Second,
 		RegistrationTimeout: 10 * time.Second, PublicBaseDomain: "portway.localhost", MaxTunnels: 1024,
 		ReadIdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxStreams: 32, StreamTimeout: 30 * time.Second,
-		MaxFrame: protocol.MaxPayloadSize, sessions: make(map[string]*registryEntry), hostnames: make(map[string]string), active: make(map[net.Conn]struct{})}
+		MaxFrame: protocol.MaxPayloadSize, ShutdownTimeout: 10 * time.Second, sessions: make(map[string]*registryEntry), hostnames: make(map[string]string), active: make(map[net.Conn]struct{}), httpServers: make(map[*http.Server]*limitedListener), changed: make(chan struct{}), shutdownDone: make(chan struct{})}
 }
 
 func (s *Server) validate() error {
+	if s.ShutdownTimeout <= 0 || s.ShutdownTimeout > time.Minute {
+		return ErrConfig
+	}
 	if s.PublicPort < 0 || s.PublicPort > 65535 || s.MaxStreams < 1 || s.MaxStreams > 1024 || s.StreamTimeout <= 0 {
 		return ErrConfig
 	}
@@ -72,7 +84,7 @@ func (s *Server) validate() error {
 func (s *Server) admit(conn net.Conn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.active) >= s.MaxConnections {
+	if s.draining || len(s.active) >= s.MaxConnections {
 		return false
 	}
 	s.active[conn] = struct{}{}
@@ -82,6 +94,7 @@ func (s *Server) admit(conn net.Conn) bool {
 func (s *Server) release(conn net.Conn) {
 	s.mu.Lock()
 	delete(s.active, conn)
+	s.notifyLocked()
 	s.mu.Unlock()
 }
 
@@ -113,7 +126,11 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 		}
 		if !s.admit(conn) {
 			_ = conn.Close()
-			s.Logger.Warn("relay_connection_rejected", "reason", "capacity")
+			reason := "capacity"
+			if s.Draining() {
+				reason = "draining"
+			}
+			s.Logger.Warn("relay_connection_rejected", "reason", reason)
 			continue
 		}
 		workers.Add(1)
@@ -132,6 +149,9 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 	}
 	if !s.admit(conn) {
 		_ = conn.Close()
+		if s.Draining() {
+			return ErrDraining
+		}
 		return ErrCapacity
 	}
 	return s.serveAdmitted(ctx, conn)
@@ -167,7 +187,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	if err != nil || remote.MaxPayloadSize < protocol.MaxHandshakePayloadSize {
 		return protocol.ErrInvalidHandshake
 	}
-	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat}, MaxPayloadSize: s.MaxFrame})
+	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat, protocol.CapabilityGracefulShutdown}, MaxPayloadSize: s.MaxFrame})
 	if err != nil {
 		return err
 	}
@@ -248,9 +268,10 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	}
 	var streams *mux.Conn
 	heartbeat := slices.Contains(ack.Capabilities, protocol.CapabilityHeartbeat)
+	graceful := slices.Contains(ack.Capabilities, protocol.CapabilityGracefulShutdown)
 	httpMode := request.Protocol == "http"
-	if httpMode || heartbeat {
-		streams, err = mux.New(ctx, conn, reader, mux.Options{MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt, Diagnostic: !httpMode, Heartbeat: heartbeat})
+	if httpMode || heartbeat || graceful {
+		streams, err = mux.New(ctx, conn, reader, mux.Options{MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt, Diagnostic: !httpMode, Heartbeat: heartbeat, GracefulShutdown: graceful, ShutdownTimeout: s.ShutdownTimeout})
 		if err != nil {
 			return err
 		}
@@ -258,15 +279,15 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	}
 	owner, code := s.register(ctx, identity, connectionID, request, raw)
 	if code != "" {
+		if code == protocol.RegisterDraining && !graceful {
+			code = protocol.RegisterCapacity
+		}
 		_ = s.rejectRegistration(conn, code, ack.MaxPayloadSize, registrationDeadline)
 		return errors.New(code)
 	}
 	defer s.unregister(owner)
-	var finishRegistration func()
-	if httpMode {
-		finishRegistration = sync.OnceFunc(func() { close(owner.registrationDone) })
-		defer finishRegistration()
-	}
+	finishRegistration := sync.OnceFunc(func() { close(owner.registrationDone) })
+	defer finishRegistration()
 	publicURL := ""
 	if httpMode {
 		publicURL = "https://" + owner.PublicHostname
@@ -283,16 +304,18 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	}
 	s.Logger.Info("relay_registered", "tunnel_id", owner.TunnelID, "connection_id", owner.ConnectionID, "generation", owner.Generation.String(), "hostname", owner.PublicHostname)
 	if streams != nil {
-		if httpMode {
-			s.mu.Lock()
-			if s.sessions[owner.TunnelID] == owner {
+		s.mu.Lock()
+		if s.sessions[owner.TunnelID] == owner {
+			owner.connection = streams
+			if httpMode {
 				owner.streams = streams
 			}
-			s.mu.Unlock()
-			finishRegistration()
 		}
+		s.mu.Unlock()
+		finishRegistration()
 		return streams.Run()
 	}
+	finishRegistration()
 	readDeadline := earlier(time.Now().Add(s.ReadIdleTimeout), identity.ExpiresAt)
 	if ctxDeadline, ok := ctx.Deadline(); ok {
 		readDeadline = earlier(readDeadline, ctxDeadline)
@@ -333,6 +356,9 @@ func earlier(a, b time.Time) time.Time {
 }
 
 func closeReason(err error) string {
+	if errors.Is(err, mux.ErrDraining) || errors.Is(err, mux.ErrPeerShutdown) {
+		return "drained"
+	}
 	if errors.Is(err, mux.ErrHeartbeatTimeout) {
 		return "heartbeat_timeout"
 	}

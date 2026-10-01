@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/radityama/portway/internal/mux"
+	"github.com/radityama/portway/internal/protocol"
 )
 
 const BackoffResetAfter = 60 * time.Second
@@ -50,6 +51,10 @@ func WaitReconnect(ctx context.Context, delay time.Duration) error {
 // Retryable fails closed on unknown errors. Certificate/auth/protocol/state
 // failures require operator action and must never become transport retries.
 func Retryable(err error) bool {
+	var registration *RegistrationError
+	if errors.Is(err, mux.ErrPeerShutdown) || errors.As(err, &registration) && registration.Code == protocol.RegisterDraining {
+		return true
+	}
 	if errors.Is(err, context.Canceled) {
 		return false
 	}
@@ -69,6 +74,10 @@ func Retryable(err error) bool {
 }
 
 func DisconnectReason(err error) string {
+	var registration *RegistrationError
+	if errors.Is(err, mux.ErrPeerShutdown) || errors.As(err, &registration) && registration.Code == protocol.RegisterDraining {
+		return "relay_draining"
+	}
 	if errors.Is(err, mux.ErrHeartbeatTimeout) {
 		return "heartbeat_timeout"
 	}

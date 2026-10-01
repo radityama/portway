@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -65,6 +66,13 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 		return code
 	}
 	once := false
+	var shutdownStarted sync.Once
+	shutdownRelay := ""
+	startShutdown := func(connectionID string) {
+		shutdownStarted.Do(func() {
+			emit(Event{Event: "shutdown_started", ConnectionID: connectionID, Relay: shutdownRelay, Reason: "user_shutdown"})
+		})
+	}
 	register := false
 	port := 0
 	if len(args) == 0 {
@@ -92,6 +100,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	if err != nil {
 		return fail("invalid relay connection configuration", 1)
 	}
+	shutdownRelay = cfg.Address
 	tlsConfig, err := transport.ClientConfig(cfg.CAFile, cfg.ServerName)
 	if err != nil {
 		return fail("cannot load relay certificate trust; run make setup", 1)
@@ -99,6 +108,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	emit(Event{Event: "starting"})
 	if port != 0 && !localReachable(ctx, port) {
 		if errors.Is(ctx.Err(), context.Canceled) {
+			startShutdown("")
 			emit(Event{Event: "shutdown_complete"})
 			return 0
 		}
@@ -111,6 +121,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	client.RegistrationTimeout = cfg.RegistrationTimeout
 	client.MaxStreams = cfg.MaxStreams
 	client.StreamTimeout = cfg.StreamTimeout
+	client.ShutdownTimeout = cfg.ShutdownTimeout
 	localURL := ""
 	if port != 0 {
 		localURL = fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -121,6 +132,10 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 		var connectedAt time.Time
 		connectionID := ""
 		attemptErr := func() (result error) {
+			life, cancelLife := context.WithCancel(context.WithoutCancel(ctx))
+			defer cancelLife()
+			stopAttempt := context.AfterFunc(ctx, cancelLife)
+			defer stopAttempt()
 			// Reload the private file for each new handshake; never retain credentials
 			// in reconnect state or print an underlying read/transport error.
 			token, err := auth.ReadTokenFile(cfg.TokenFile)
@@ -128,7 +143,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 				return errCredentialFile
 			}
 			emit(Event{Event: "tunnel_connecting", Relay: cfg.Address, Port: port})
-			session, err := client.Connect(ctx, cfg.Address, token)
+			session, err := client.Connect(life, cfg.Address, token)
 			token = ""
 			if err != nil {
 				return err
@@ -174,9 +189,22 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 			if once {
 				return nil
 			}
+			onDraining := func() {
+				if ctx.Err() != nil {
+					startShutdown(session.ConnectionID)
+				} else {
+					emit(Event{Event: "tunnel_draining", ConnectionID: session.ConnectionID, Relay: cfg.Address, Reason: "peer_shutdown"})
+				}
+			}
+			if register {
+				stopAttempt()
+			}
 			var errWait error
 			if port != 0 {
-				errWait = session.ServeHTTPReady(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), func() {
+				errWait = session.ServeHTTPGraceful(net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), ctx, func() {
+					if ctx.Err() != nil {
+						return
+					}
 					connectedAt = time.Now()
 					emit(Event{Event: "tunnel_connected", ConnectionID: session.ConnectionID, Relay: cfg.Address})
 					emit(Event{Event: "public_url", URL: publicURL})
@@ -184,14 +212,21 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 					if jsonMode != "1" {
 						fmt.Fprintf(stdout, "Public %s\nReady.\n", publicURL)
 					}
-				})
+				}, onDraining)
 			} else {
-				errWait = session.Wait()
+				if register {
+					errWait = session.WaitGraceful(ctx, onDraining)
+				} else {
+					errWait = session.Wait()
+				}
 			}
 			return errWait
 		}()
-		if ctx.Err() != nil || attemptErr == nil {
+		if ctx.Err() != nil || attemptErr == nil || (port == 0 && agent.DisconnectReason(attemptErr) == "relay_draining") {
 			if !once {
+				if ctx.Err() != nil {
+					startShutdown(connectionID)
+				}
 				emit(Event{Event: "shutdown_complete"})
 			}
 			return 0
@@ -224,6 +259,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 			fmt.Fprintf(stderr, "Relay disconnected. Reconnecting in %s.\n", delay.Round(time.Millisecond))
 		}
 		if agent.WaitReconnect(ctx, delay) != nil {
+			startShutdown("")
 			emit(Event{Event: "shutdown_complete"})
 			return 0
 		}

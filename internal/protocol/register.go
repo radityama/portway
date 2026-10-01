@@ -102,6 +102,7 @@ const (
 	RegisterStale     = "REGISTER_STALE"
 	RegisterCapacity  = "REGISTER_CAPACITY"
 	RegisterConflict  = "REGISTER_CONFLICT"
+	RegisterDraining  = "REGISTER_DRAINING"
 )
 
 func (value Register) Validate() error {
@@ -189,7 +190,7 @@ func DecodeRegisterOK(frame Frame) (RegisterOK, error) {
 	return value, nil
 }
 func validRegisterCode(code string) bool {
-	return code == RegisterInvalid || code == RegisterForbidden || code == RegisterStale || code == RegisterCapacity || code == RegisterConflict
+	return code == RegisterInvalid || code == RegisterForbidden || code == RegisterStale || code == RegisterCapacity || code == RegisterConflict || code == RegisterDraining
 }
 func EncodeRegisterError(value RegisterError) (Frame, error) {
 	if !validRegisterCode(value.Code) {

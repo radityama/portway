@@ -485,6 +485,34 @@ retryable, while authentication, TLS verification, protocol and registration
 errors stop. Diagnostic commands retain their single-session behavior. New
 readiness events describe the recovered session; failed requests are not replayed.
 
+### Phase 7 draining
+
+Phase 7 adds negotiated GOAWAY SHUTDOWN/DRAINED. Receipt closes new stream
+admission; existing DATA, FIN, RESET, credit updates and heartbeat remain valid.
+Both sides finish stream and worker cleanup and exchange DRAINED before closing
+the transport, preserving queued response bytes. OPEN racing admission receives
+STREAM_DRAINING; new public requests return 503 without opening a stream.
+
+Relay shutdown closes node admission before starting per-session drains.
+Pending handshakes close promptly, registrations cannot advance ownership while
+draining, and deadline expiry closes raw tunnel and public HTTPS sockets to
+interrupt slow readers, uploads and blocked writes. Admitted HTTP handlers stay
+counted until their owned cleanup has joined. The default deadline is 10s, with
+positive overrides up to 1m. Credential expiry and hard cancellation remain
+earlier bounds. Public listeners may remain bound to return 503 during draining;
+the binary closes them after the drain or at its deadline.
+
+Port invocations finish the current drained session before scheduling recovery
+with `relay_draining`; REGISTER_DRAINING is retryable too. Other registration
+errors stay terminal. Diagnostics drain once and exit. Generation replacement
+and owner-aware unregister remain unchanged. WebSocket upgrades are Phase 8.
+See [PHASE_7.md](./PHASE_7.md) and [PROTOCOL.md](./PROTOCOL.md).
+
+Local HTTP requests use one owned socket per stream. The agent closes it during
+cleanup but does not request an immediate upstream close with unread upload
+bytes; this lets early responses finish before upload cancellation can cause a
+TCP reset. Stream and shutdown deadlines still bound socket lifetime.
+
 ## 22. Stale Session Protection
 
 Use generation numbers:

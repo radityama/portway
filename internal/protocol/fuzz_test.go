@@ -68,7 +68,7 @@ func FuzzFrameRoundTrip(f *testing.F) {
 
 func FuzzHandshake(f *testing.F) {
 	for _, fixture := range loadFixtures(f).Frames {
-		if fixture.Type >= 1 && fixture.Type <= 10 {
+		if (fixture.Type >= 1 && fixture.Type <= 10) || fixture.Type == uint8(TypeGoAway) {
 			payload, err := hex.DecodeString(fixture.PayloadHex)
 			if err != nil {
 				f.Fatal(err)
@@ -80,8 +80,21 @@ func FuzzHandshake(f *testing.F) {
 	f.Add([]byte(`{"version":1,"capabilities":["heartbeat"],"required_capabilities":["heartbeat"],"max_payload_size":1024}`))
 	f.Add([]byte(`{"version":1,"capabilities":["future_feature"],"max_payload_size":1}`))
 	f.Add([]byte(`{"version":1,"version":2,"capabilities":null,"max_payload_size":0}`))
+	f.Add([]byte(`{"code":"DRAINED"}`))
+	f.Add([]byte(`{"code":"SHUTDOWN","code":"DRAINED"}`))
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, payload []byte) {
+		goaway := Frame{Version: Version, Type: TypeGoAway, Payload: payload}
+		if value, err := DecodeGoAway(goaway); err == nil {
+			encoded, err := EncodeGoAway(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeGoAway(encoded)
+			if err != nil || decoded != value {
+				t.Fatal("GOAWAY canonical round trip failed")
+			}
+		}
 		for _, typ := range []Type{TypePing, TypePong} {
 			frame := Frame{Version: Version, Type: typ, Payload: payload}
 			if value, err := DecodeHeartbeat(frame); err == nil {

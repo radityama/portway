@@ -32,6 +32,10 @@ type Options struct {
 	Heartbeat         bool
 	HeartbeatInterval time.Duration
 	HeartbeatTimeout  time.Duration
+	GracefulShutdown  bool
+	ShutdownTimeout   time.Duration
+	Shutdown          <-chan struct{}
+	OnDraining        func()
 }
 type Conn struct {
 	conn      net.Conn
@@ -64,9 +68,25 @@ type Conn struct {
 	lastPong          time.Time
 	heartbeatWake     chan struct{}
 	terminalError     error
+	draining          bool
+	peerDraining      bool
+	peerDrained       bool
+	drainedStarted    bool
+	drainedSent       bool
+	drainStarted      bool
+	drainDeadline     time.Time
+	drainWake         chan struct{}
+	drainWriteDone    chan struct{}
+	drainWriteErr     error
 }
 
 func New(ctx context.Context, conn net.Conn, reader io.Reader, opts Options) (*Conn, error) {
+	if opts.ShutdownTimeout == 0 {
+		opts.ShutdownTimeout = 10 * time.Second
+	}
+	if opts.ShutdownTimeout <= 0 || opts.ShutdownTimeout > time.Minute {
+		return nil, ErrProtocol
+	}
 	if opts.HeartbeatInterval == 0 {
 		opts.HeartbeatInterval = protocol.HeartbeatInterval
 	}
@@ -82,6 +102,8 @@ func New(ctx context.Context, conn net.Conn, reader io.Reader, opts Options) (*C
 	life, cancel := context.WithDeadline(ctx, opts.ExpiresAt)
 	c := &Conn{conn: conn, reader: reader, opts: opts, ctx: life, parent: ctx, cancel: cancel, writer: make(chan struct{}, 1), opening: make(chan struct{}, 1), streams: make(map[uint64]*Stream), sendWindow: protocol.InitialConnectionWindow, recvWindow: protocol.InitialConnectionWindow, changed: make(chan struct{}), controlWake: make(chan struct{}, 1), controls: make(chan protocol.Frame, 2*opts.MaxStreams+4), heartbeatWake: make(chan struct{}, 1)}
 	c.mu.Lock()
+	c.drainWake = make(chan struct{}, 1)
+	c.drainWriteDone = make(chan struct{})
 	c.stop = context.AfterFunc(life, c.Close)
 	c.mu.Unlock()
 	return c, nil
@@ -205,6 +227,10 @@ func (c *Conn) startOpen(ctx context.Context, request protocol.OpenStream) (*Str
 		c.mu.Unlock()
 		return nil, net.ErrClosed
 	}
+	if c.draining {
+		c.mu.Unlock()
+		return nil, ErrDraining
+	}
 	if len(c.streams) >= c.opts.MaxStreams || c.highest == ^uint64(0) {
 		c.mu.Unlock()
 		return nil, ErrLimit
@@ -267,13 +293,19 @@ func (c *Conn) Open(ctx context.Context, request protocol.OpenStream) (*Stream, 
 }
 
 // Run is the only reader. It joins bounded acceptance workers before returning.
-func (c *Conn) Run() error {
-	defer func() { c.Close(); c.workers.Wait() }()
+func (c *Conn) Run() (result error) {
+	// A control callback can observe cancellation before the socket reader.
+	// Preserve the owned worker's terminal reason on either exit path.
+	defer func() { result = c.readError(result); c.Close(); c.workers.Wait() }()
 	c.workers.Add(1)
 	go func() { defer c.workers.Done(); c.controlLoop() }()
 	if c.opts.Heartbeat {
 		c.workers.Add(1)
 		go func() { defer c.workers.Done(); c.heartbeatLoop() }()
+	}
+	if c.opts.GracefulShutdown || c.opts.Shutdown != nil {
+		c.workers.Add(1)
+		go func() { defer c.workers.Done(); c.drainLoop() }()
 	}
 	allowed := []protocol.Type{protocol.TypeData, protocol.TypeWindowUpdate, protocol.TypeCloseStream, protocol.TypeResetStream}
 	if c.opts.Accept != nil {
@@ -286,6 +318,9 @@ func (c *Conn) Run() error {
 	}
 	if c.opts.Heartbeat {
 		allowed = append(allowed, protocol.TypePing, protocol.TypePong)
+	}
+	if c.opts.GracefulShutdown {
+		allowed = append(allowed, protocol.TypeGoAway)
 	}
 	for {
 		deadline := time.Now().Add(c.opts.IdleTimeout)
@@ -301,6 +336,12 @@ func (c *Conn) Run() error {
 		}
 		if f.Type == protocol.TypePing || f.Type == protocol.TypePong {
 			if err := c.receiveHeartbeat(f); err != nil {
+				return err
+			}
+			continue
+		}
+		if f.Type == protocol.TypeGoAway {
+			if err := c.receiveGoAway(f); err != nil {
 				return err
 			}
 			continue
@@ -323,6 +364,17 @@ func (c *Conn) Run() error {
 				return ErrProtocol
 			}
 			c.highest = f.StreamID
+			if c.draining {
+				code := protocol.StreamLimit
+				if c.opts.GracefulShutdown {
+					code = protocol.StreamDraining
+				}
+				c.mu.Unlock()
+				if err := c.queueControl(protocol.TypeOpenStreamError, f.StreamID, code); err != nil {
+					return err
+				}
+				continue
+			}
 			if len(c.streams) >= c.opts.MaxStreams || c.accepting >= c.opts.MaxStreams {
 				c.mu.Unlock()
 				if err := c.queueControl(protocol.TypeOpenStreamError, f.StreamID, protocol.StreamLimit); err != nil {
@@ -343,6 +395,7 @@ func (c *Conn) Run() error {
 					s.Close()
 					c.mu.Lock()
 					c.accepting--
+					c.notifyLocked()
 					c.mu.Unlock()
 				}()
 				c.opts.Accept(s, request)
@@ -427,8 +480,16 @@ func (c *Conn) Run() error {
 }
 
 func (c *Conn) readError(err error) error {
+	// Negotiated draining classifies transport closure only. A bad header must
+	// remain a terminal protocol error, even after a valid SHUTDOWN.
+	var network net.Error
+	transportEnd := errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &network)
+	if !transportEnd {
+		return err
+	}
 	c.mu.Lock()
 	terminal := c.terminalError
+	peerDraining := c.peerDraining
 	c.mu.Unlock()
 	if terminal != nil {
 		return terminal
@@ -440,6 +501,9 @@ func (c *Conn) readError(err error) error {
 	// Normalize that race so credential expiry has one terminal session reason.
 	if !time.Now().Before(c.opts.ExpiresAt) {
 		return context.DeadlineExceeded
+	}
+	if peerDraining {
+		return ErrPeerShutdown
 	}
 	if c.ctx.Err() != nil {
 		if errors.Is(c.ctx.Err(), context.Canceled) {

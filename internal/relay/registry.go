@@ -27,6 +27,7 @@ type registryEntry struct {
 	conn             net.Conn
 	ctx              context.Context
 	streams          *mux.Conn
+	connection       *mux.Conn
 	registrationDone chan struct{}
 }
 
@@ -65,10 +66,12 @@ func (s *Server) register(ctx context.Context, identity auth.Identity, connectio
 	}
 	host := assignedHostname(request.TunnelID, s.PublicBaseDomain)
 	owner := &registryEntry{Session: Session{TunnelID: request.TunnelID, ConnectionID: connectionID, Generation: request.Generation, PublicHostname: host, ExpiresAt: identity.ExpiresAt, LastSeen: time.Now()}, conn: conn, ctx: ctx}
-	if request.Protocol == "http" {
-		owner.registrationDone = make(chan struct{})
-	}
+	owner.registrationDone = make(chan struct{})
 	s.mu.Lock()
+	if s.draining {
+		s.mu.Unlock()
+		return nil, protocol.RegisterDraining
+	}
 	previous := s.sessions[request.TunnelID]
 	if previous != nil && previous.Generation >= request.Generation {
 		s.mu.Unlock()
@@ -86,7 +89,10 @@ func (s *Server) register(ctx context.Context, identity auth.Identity, connectio
 	var oldStreams *mux.Conn
 	if previous != nil {
 		old = previous.conn
-		oldStreams = previous.streams
+		oldStreams = previous.connection
+		if oldStreams == nil {
+			oldStreams = previous.streams
+		}
 	}
 	s.sessions[request.TunnelID] = owner
 	s.hostnames[host] = request.TunnelID

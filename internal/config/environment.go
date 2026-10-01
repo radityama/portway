@@ -15,6 +15,7 @@ var ErrEnvironment = errors.New("invalid Portway connection environment")
 type Lookup func(string) (string, bool)
 
 type Relay struct {
+	ShutdownTimeout      time.Duration
 	PublicBaseDomain     string
 	MaxTunnels           int
 	RegistrationTimeout  time.Duration
@@ -37,6 +38,7 @@ type Relay struct {
 }
 
 type Agent struct {
+	ShutdownTimeout     time.Duration
 	MaxStreams          int
 	StreamTimeout       time.Duration
 	TunnelID            string
@@ -85,6 +87,10 @@ func RelayEnvironment(env Lookup) (Relay, error) {
 		return Relay{}, ErrEnvironment
 	}
 	cfg := Relay{Address: net.JoinHostPort(host, p), CertFile: value(env, "RELAY_TLS_CERT_FILE", ".tmp/dev/relay-cert.pem"), KeyFile: value(env, "RELAY_TLS_KEY_FILE", ".tmp/dev/relay-key.pem"), CredentialsFile: value(env, "RELAY_CREDENTIALS_FILE", ".tmp/dev/relay-credentials.json")}
+	cfg.ShutdownTimeout, err = duration(env, "RELAY_SHUTDOWN_TIMEOUT", "10s")
+	if err != nil || cfg.ShutdownTimeout > time.Minute {
+		return Relay{}, ErrEnvironment
+	}
 	maxConnections, err := strconv.Atoi(value(env, "RELAY_MAX_CONNECTIONS", "128"))
 	if err != nil || maxConnections < 1 || maxConnections > 10000 {
 		return Relay{}, ErrEnvironment
@@ -150,6 +156,10 @@ func AgentEnvironment(env Lookup) (Agent, error) {
 		return Agent{}, err
 	}
 	cfg := Agent{Address: value(env, "PORTWAY_RELAY_ADDR", net.JoinHostPort("127.0.0.1", p)), CAFile: value(env, "PORTWAY_RELAY_CA_FILE", ".tmp/dev/ca.pem"), TokenFile: value(env, "PORTWAY_TOKEN_FILE", ".tmp/dev/agent-token")}
+	cfg.ShutdownTimeout, err = duration(env, "PORTWAY_SHUTDOWN_TIMEOUT", "10s")
+	if err != nil || cfg.ShutdownTimeout > time.Minute {
+		return Agent{}, ErrEnvironment
+	}
 	cfg.MaxStreams, err = strconv.Atoi(value(env, "PORTWAY_MAX_STREAMS", "32"))
 	if err != nil || cfg.MaxStreams < 1 || cfg.MaxStreams > 1024 {
 		return Agent{}, ErrEnvironment

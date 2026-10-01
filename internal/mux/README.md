@@ -21,3 +21,11 @@ tracks a single cryptographic probe and a monotonic deadline; matching PONG
 updates the read-only liveness snapshot. PONG replies use the bounded control
 queue and require no DATA credit. Diagnostic mode accepts only negotiated
 heartbeat messages, without enabling stream routing. All workers join on exit.
+
+Phase 7 adds one owned drain worker and a separate shutdown signal. `Shutdown`
+closes admission, writes SHUTDOWN after admitted OPEN writes, and exchanges
+DRAINED after streams and acceptance workers finish. Peer DRAINED prevents
+closing over queued response data. The first deadline cannot be extended.
+`Close` and lifetime cancellation still abort immediately. Legacy accepting
+endpoints wait for peer closure/deadline because they lack completion proof.
+See [Phase 7](../../docs/PHASE_7.md).

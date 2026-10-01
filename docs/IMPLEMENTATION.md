@@ -267,7 +267,16 @@ Implement:
 - shutdown deadline
 - cleanup
 
-Verify with active HTTP and WebSocket connections.
+Phase 7 implements optional `graceful_shutdown`, strict GOAWAY SHUTDOWN/DRAINED,
+closed stream/node admission, active HTTP and acceptance-worker tracking, and a
+configurable 10s shutdown deadline. Signals drain on a separate lifetime context;
+hard cancellation, expiry and transport failure still abort immediately. Relay
+drain rejects new public requests with 503 and new tunnel sockets before worker
+creation. Shutdown joins owned workers and preserves generation watermarks.
+See [PHASE_7.md](./PHASE_7.md) for verification and compatibility boundaries.
+
+Verify with active HTTP and duplex streams. Actual WebSocket upgrade/shutdown
+coverage follows in Phase 8, when upgrades are implemented.
 
 ## 12. Phase 8 — WebSocket and Streaming
 

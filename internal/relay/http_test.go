@@ -299,8 +299,9 @@ func TestLocalEarlyResponseFinishesBeforeUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != 422 || responseBody(t, response) != "early" {
-		t.Fatal("early local reply was reset by pending upload cleanup")
+	body := responseBody(t, response)
+	if response.StatusCode != 422 || body != "early" {
+		t.Fatalf("early local reply was reset by pending upload cleanup: status=%d bytes=%d", response.StatusCode, len(body))
 	}
 	response, err = f.client.Get(f.url + "/still-active")
 	if err != nil {

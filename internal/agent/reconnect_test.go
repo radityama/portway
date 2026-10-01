@@ -55,7 +55,7 @@ func TestReconnectWaitCancelsImmediately(t *testing.T) {
 }
 
 func TestRetryClassificationFailsClosed(t *testing.T) {
-	for _, err := range []error{io.EOF, io.ErrUnexpectedEOF, net.ErrClosed, mux.ErrHeartbeatTimeout, context.DeadlineExceeded, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}} {
+	for _, err := range []error{io.EOF, io.ErrUnexpectedEOF, net.ErrClosed, mux.ErrHeartbeatTimeout, mux.ErrPeerShutdown, &RegistrationError{Code: protocol.RegisterDraining}, context.DeadlineExceeded, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}} {
 		if !Retryable(err) {
 			t.Fatalf("transient error not retryable: %T", err)
 		}
@@ -64,5 +64,16 @@ func TestRetryClassificationFailsClosed(t *testing.T) {
 		if Retryable(err) {
 			t.Fatalf("terminal error retried: %T", err)
 		}
+	}
+}
+
+func TestDrainDisconnectReason(t *testing.T) {
+	for _, err := range []error{mux.ErrPeerShutdown, &RegistrationError{Code: protocol.RegisterDraining}} {
+		if DisconnectReason(err) != "relay_draining" {
+			t.Fatal("drain reason lost")
+		}
+	}
+	if Retryable(protocol.ErrInvalidGoAway) {
+		t.Fatal("malformed GOAWAY retried")
 	}
 }

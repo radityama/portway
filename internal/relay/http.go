@@ -74,13 +74,27 @@ func (s *Server) ServeHTTPS(ctx context.Context, listener net.Listener, config *
 	tlsConfig.NextProtos = []string{"http/1.1"}
 	httpServer := &http.Server{Handler: handler, TLSConfig: tlsConfig, TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: s.StreamTimeout, WriteTimeout: s.StreamTimeout + s.WriteTimeout, IdleTimeout: 120 * time.Second, MaxHeaderBytes: protocol.MaxHTTPHeaderSize, ErrorLog: log.New(io.Discard, "", 0), BaseContext: func(net.Listener) context.Context { return ctx }}
 	limited := &limitedListener{Listener: listener, max: s.MaxPublicConnections, active: make(map[*limitedConn]struct{})}
-	closeServer := func() { handler.mu.Lock(); handler.closing = true; handler.mu.Unlock(); _ = httpServer.Close() }
+	s.mu.Lock()
+	if s.draining {
+		s.mu.Unlock()
+		return nil
+	}
+	s.httpServers[httpServer] = limited
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); delete(s.httpServers, httpServer); s.notifyLocked(); s.mu.Unlock() }()
+	closeServer := func() {
+		handler.mu.Lock()
+		handler.closing = true
+		handler.mu.Unlock()
+		limited.closeAll()
+		_ = httpServer.Close()
+	}
 	stop := context.AfterFunc(ctx, closeServer)
 	err := httpServer.ServeTLS(limited, "", "")
 	stop()
 	closeServer()
 	handler.handlers.Wait()
-	if ctx.Err() != nil || errors.Is(err, http.ErrServerClosed) {
+	if ctx.Err() != nil || errors.Is(err, http.ErrServerClosed) || (s.Draining() && errors.Is(err, net.ErrClosed)) {
 		return nil
 	}
 	return errors.New("public HTTPS listener failed")
@@ -88,9 +102,10 @@ func (s *Server) ServeHTTPS(ctx context.Context, listener net.Listener, config *
 
 type limitedListener struct {
 	net.Listener
-	mu     sync.Mutex
-	max    int
-	active map[*limitedConn]struct{}
+	mu      sync.Mutex
+	max     int
+	active  map[*limitedConn]struct{}
+	closing bool
 }
 type limitedConn struct {
 	net.Conn
@@ -105,6 +120,11 @@ func (l *limitedListener) Accept() (net.Conn, error) {
 			return nil, err
 		}
 		l.mu.Lock()
+		if l.closing {
+			l.mu.Unlock()
+			conn.Close()
+			return nil, net.ErrClosed
+		}
 		if len(l.active) >= l.max {
 			l.mu.Unlock()
 			conn.Close()
@@ -116,6 +136,22 @@ func (l *limitedListener) Accept() (net.Conn, error) {
 		return bounded, nil
 	}
 }
+
+// Close raw public sockets before TLS Close can wait for close-notify. This
+// interrupts slow header readers, uploads and blocked response writes together.
+func (l *limitedListener) closeAll() {
+	l.mu.Lock()
+	l.closing = true
+	connections := make([]*limitedConn, 0, len(l.active))
+	for conn := range l.active {
+		connections = append(connections, conn)
+	}
+	l.mu.Unlock()
+	l.Listener.Close()
+	for _, conn := range connections {
+		conn.Close()
+	}
+}
 func (c *limitedConn) Close() error {
 	err := c.Conn.Close()
 	c.once.Do(func() { c.parent.mu.Lock(); delete(c.parent.active, c); c.parent.mu.Unlock() })
@@ -123,6 +159,16 @@ func (c *limitedConn) Close() error {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	if s.draining {
+		s.mu.Unlock()
+		w.Header().Set("Connection", "close")
+		httpFailure(w, "relay draining", 503)
+		return
+	}
+	s.httpActive++
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); s.httpActive--; s.notifyLocked(); s.mu.Unlock() }()
 	host, err := CanonicalHost(r.Host, s.PublicPort)
 	if err != nil || r.URL.IsAbs() || r.URL.Host != "" {
 		httpFailure(w, "invalid host or request target", 400)
@@ -332,12 +378,12 @@ func streamStatus(ctx context.Context, err error) int {
 	if errors.Is(err, protocol.ErrPayloadTooLarge) {
 		return 431
 	}
-	if errors.Is(err, mux.ErrLimit) {
+	if errors.Is(err, mux.ErrLimit) || errors.Is(err, mux.ErrDraining) {
 		return 503
 	}
 	var remote *mux.RemoteError
 	if errors.As(err, &remote) {
-		if remote.Code == protocol.StreamLimit {
+		if remote.Code == protocol.StreamLimit || remote.Code == protocol.StreamDraining {
 			return 503
 		}
 		if remote.Code == protocol.StreamTimeout {

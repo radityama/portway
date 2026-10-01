@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–6 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. The API and dashboard are skeletons.
+Phases 0–7 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. The API and dashboard are skeletons.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -127,7 +127,7 @@ connection. A stalled consumer no longer blocks the shared frame reader; many
 stalled streams can still fill the shared budget. Update agent and relay together:
 HTTP requires negotiated `multiplexing` and `flow_control`. See
 [Phase 4](./docs/PHASE_4.md) for HTTP settings and [Phase 5](./docs/PHASE_5.md)
-for flow-control bounds and upgrade behavior. Negotiated heartbeat probes every 15s and requires a matching reply within 45s; see [Phase 6](./docs/PHASE_6.md) for recovery policy and terminal errors.
+for flow-control bounds and upgrade behavior. Negotiated heartbeat probes every 15s and requires a matching reply within 45s; see [Phase 6](./docs/PHASE_6.md) for recovery policy and terminal errors. Graceful shutdown defaults to 10s; set `PORTWAY_SHUTDOWN_TIMEOUT` or `RELAY_SHUTDOWN_TIMEOUT` to a positive duration up to 1m. See [Phase 7](./docs/PHASE_7.md).
 
 ## Quality gates
 

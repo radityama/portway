@@ -77,6 +77,24 @@ A bounded registration-completion barrier lets a request arriving immediately
 after the agent receives its ACK wait for relay routing publication. It holds
 no registry lock during I/O and never forwards before ACK success.
 
+## ADR-012: Negotiated Drain Completion and Separate Signal Lifetimes
+
+Registered peers optionally negotiate `graceful_shutdown`. GOAWAY SHUTDOWN closes
+admission; GOAWAY DRAINED proves stream and acceptance-worker cleanup completed.
+An empty local map does not prove that a peer consumed buffered responses, so
+graceful close requires completion in both directions. Both messages are strict,
+bounded and limited to one each per direction, with existing frame-reader and
+writer ownership. Admitted OPEN writes precede SHUTDOWN.
+
+Signals request a 10s default drain on a separate lifetime context. Hard
+cancellation, expiry, replacement and transport failures still abort. The relay
+counts HTTP handlers through cleanup and closes raw public/tunnel sockets at the
+deadline, so a client blocked on response reading cannot delay shutdown until a
+longer HTTP write timeout. Legacy peers receive no unsupported frames; accepting
+endpoints wait for peer close/deadline without claiming completion proof.
+Remote drain remains visible and retryable in the CLI's existing backoff loop.
+No request replay, database call, durable entity or dependency is introduced.
+
 ## ADR-001: Go for Agent and Relay
 
 Go is the baseline implementation language for the data plane because it provides a strong networking standard library, straightforward concurrency, and easy cross-platform distribution.

@@ -21,6 +21,9 @@ export interface Heartbeat {
   nonce: string;
   timestamp: string;
 }
+export interface GoAway {
+  code: 'SHUTDOWN' | 'DRAINED';
+}
 export interface OpenStream {
   method: string;
   target: string;
@@ -31,6 +34,7 @@ export interface OpenStream {
 export const STREAM_ERROR_CODES = {
   UNAVAILABLE: 'UPSTREAM_UNAVAILABLE',
   LIMIT: 'STREAM_LIMIT',
+  DRAINING: 'STREAM_DRAINING',
   TIMEOUT: 'STREAM_TIMEOUT',
   CANCELLED: 'STREAM_CANCELLED',
   BODY_LIMIT: 'BODY_LIMIT',
@@ -42,6 +46,7 @@ export const REGISTER_ERROR_CODES = {
   FORBIDDEN: 'REGISTER_FORBIDDEN',
   STALE: 'REGISTER_STALE',
   CAPACITY: 'REGISTER_CAPACITY',
+  DRAINING: 'REGISTER_DRAINING',
   CONFLICT: 'REGISTER_CONFLICT',
 } as const;
 

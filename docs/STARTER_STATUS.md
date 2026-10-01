@@ -58,7 +58,16 @@ sessions authenticate and reserve higher generations. Transport loss cancels
 active HTTP work without replay; terminal auth/TLS/protocol/registration errors
 stop. See [PHASE_6.md](./PHASE_6.md).
 
-The next phase is Phase 7: graceful shutdown and draining.
+## Phase 7
+
+Negotiated GOAWAY closes admission, preserves active streams and exchanges
+DRAINED before transport closure so buffered responses are consumed. Agent and
+relay signals drain within a configurable 10s deadline, then cancel sockets and
+join workers. Relay drain returns 503 for new public requests, rejects new tunnel
+connections, and retains ownership watermarks. Remote draining schedules normal
+port-invocation reconnect; diagnostics exit without reconnect. See [PHASE_7.md](./PHASE_7.md).
+
+The next phase is Phase 8: WebSocket upgrades and streaming refinements.
 Durable credential issuance, database migrations, and dashboard features remain
 later work.
 
@@ -73,6 +82,7 @@ later work.
 - public HTTPS routing, bounded HTTP streams, and fixed loopback forwarding
 - stream/connection credit windows, bounded receive pages, and backpressure
 - registered-session heartbeat and cancellable CLI reconnect with fresh generations
+- negotiated drain completion and deadline-bound agent/relay signal shutdown
 - control-plane HTTP API scaffold
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification

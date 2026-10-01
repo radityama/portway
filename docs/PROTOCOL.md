@@ -388,6 +388,37 @@ errors are terminal. Interrupted requests are closed and never replayed. Relay
 selection and credential renewal remain later phases. Diagnostic commands retain
 their one-session behavior.
 
+## Graceful shutdown (Phase 7)
+
+Registered sessions optionally negotiate `graceful_shutdown`. GOAWAY (`0x17`)
+uses stream ID 0 and strict JSON `{"code":"SHUTDOWN"}`, capped at 4096 bytes
+before allocation. After REGISTER_OK, each direction sends SHUTDOWN once, then
+`{"code":"DRAINED"}` once after its streams and acceptance workers finish.
+DRAINED before SHUTDOWN, unknown fields/codes, duplicates, malformed JSON and unnegotiated GOAWAY are
+terminal protocol errors. Receipt stops new stream admission and starts a local
+shutdown deadline. Each endpoint sends its own SHUTDOWN after any admitted OPEN
+has been written, continues DATA/FIN/RESET, credit updates and negotiated heartbeat
+for existing work, then exchanges DRAINED before closing. Peer DRAINED proves
+that buffered response bytes have been consumed. No new stream ID space is
+introduced. OPEN racing with admission closure is rejected with
+STREAM_DRAINING; already admitted streams may complete. No failed work is replayed.
+
+The default shutdown deadline is 10s, configurable with PORTWAY_SHUTDOWN_TIMEOUT
+or RELAY_SHUTDOWN_TIMEOUT (positive, at most 1m). Credential expiry, peer loss,
+network/write deadlines and hard cancellation still terminate earlier. Repeated
+local shutdown calls cannot extend a deadline. Deadline expiry closes sockets,
+cancels remaining work and joins owned workers. Peers without the capability
+receive no GOAWAY; local admission closes, racing OPEN uses the legacy STREAM_LIMIT
+code. A legacy origin closes after its own streams finish; a legacy accepting
+endpoint waits for peer closure or the deadline because it cannot prove the
+peer consumed buffered responses. EOF remains the legacy disconnect signal.
+
+Relay drain mode rejects new connections before worker admission, new public
+requests with 503, and in-flight registration with REGISTER_DRAINING (legacy
+peers receive REGISTER_CAPACITY). A port invocation treats peer GOAWAY and
+REGISTER_DRAINING as retryable relay draining after the current session ends;
+other registration errors remain terminal. Operator relay selection is Phase 11.
+
 ## Invariants
 
 - malformed frames are rejected without process panic

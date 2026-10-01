@@ -22,6 +22,16 @@ func (s *Session) ServeHTTP(address string) error {
 	return s.ServeHTTPReady(address, nil)
 }
 func (s *Session) ServeHTTPReady(address string, ready func()) error {
+	return s.serveHTTP(address, nil, ready, nil)
+}
+
+// ServeHTTPGraceful preserves admitted work on the session lifetime context and
+// uses a separate cancellation signal to start deadline-bound draining.
+func (s *Session) ServeHTTPGraceful(address string, shutdown context.Context, ready, draining func()) error {
+	return s.serveHTTP(address, shutdown, ready, draining)
+}
+
+func (s *Session) serveHTTP(address string, shutdown context.Context, ready, draining func()) error {
 	host, port, err := net.SplitHostPort(address)
 	ip := net.ParseIP(host)
 	number, parseErr := strconv.Atoi(port)
@@ -37,6 +47,10 @@ func (s *Session) ServeHTTPReady(address string, ready func()) error {
 	}
 	defer s.Close()
 	options := s.streamOptions(false)
+	if shutdown != nil {
+		options.Shutdown = shutdown.Done()
+		options.OnDraining = draining
+	}
 	options.Accept = func(stream *mux.Stream, request protocol.OpenStream) { s.forwardHTTP(stream, request, address) }
 	session, err := mux.New(s.ctx, s.conn, s.reader, options)
 	if err != nil {
@@ -49,7 +63,7 @@ func (s *Session) ServeHTTPReady(address string, ready func()) error {
 }
 
 func (s *Session) streamOptions(diagnostic bool) mux.Options {
-	return mux.Options{MaxStreams: s.maxStreams, MaxFrame: s.MaxPayloadSize, StreamTimeout: s.streamTimeout, WriteTimeout: s.writeTimeout, IdleTimeout: s.idleTimeout, ExpiresAt: s.ExpiresAt, Heartbeat: s.heartbeat, Diagnostic: diagnostic}
+	return mux.Options{MaxStreams: s.maxStreams, MaxFrame: s.MaxPayloadSize, StreamTimeout: s.streamTimeout, WriteTimeout: s.writeTimeout, IdleTimeout: s.idleTimeout, ExpiresAt: s.ExpiresAt, Heartbeat: s.heartbeat, Diagnostic: diagnostic, GracefulShutdown: s.graceful, ShutdownTimeout: s.shutdownTimeout}
 }
 
 func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, address string) {
@@ -78,7 +92,10 @@ func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, addr
 		stream.Reset(protocol.StreamInvalid)
 		return
 	}
-	request := &http.Request{Method: open.Method, URL: target, Host: open.Host, Header: make(http.Header), ContentLength: open.ContentLength, Close: true}
+	// This socket still serves exactly one request and is closed by owned
+	// cleanup. Do not request an immediate upstream close: an early response
+	// with unread upload bytes can otherwise be lost to a TCP reset.
+	request := &http.Request{Method: open.Method, URL: target, Host: open.Host, Header: make(http.Header), ContentLength: open.ContentLength}
 	for _, pair := range open.Headers {
 		request.Header.Add(pair[0], pair[1])
 	}

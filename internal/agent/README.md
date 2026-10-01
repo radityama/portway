@@ -16,3 +16,10 @@ The CLI owns the reconnect loop; Backoff supplies capped exponential delays with
 equal jitter and WaitReconnect observes cancellation. Security/protocol/state
 errors are terminal. Every fresh registration reserves a higher generation;
 active requests are closed and never replayed. See [Phase 6](../../docs/PHASE_6.md).
+
+Phase 7 registers `graceful_shutdown`, receives strict GOAWAY and drains active
+local work. `ServeHTTPGraceful`/`WaitGraceful` accept a shutdown signal separate
+from the connection lifetime. The CLI signals drain, exits after worker cleanup
+or its configured deadline, and reconnects on remote draining without replay.
+`Close`, existing lifetime contexts and expiry still abort immediately.
+See [Phase 7](../../docs/PHASE_7.md).

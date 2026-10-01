@@ -50,6 +50,19 @@ test('heartbeat fixtures share strict nonce/timestamp payloads and timing', () =
   }
 });
 
+test('GOAWAY fixture shares the connection-level shutdown contract', () => {
+  const frame = fixtures.frames.find(
+    (frame: { name: string }) => frame.name === 'GOAWAY',
+  );
+  assert.equal(frame.stream_id, '0');
+  assert.deepEqual(
+    JSON.parse(Buffer.from(frame.payload_hex, 'hex').toString()),
+    { code: 'SHUTDOWN' },
+  );
+  assert.equal(STREAM_ERROR_CODES.DRAINING, 'STREAM_DRAINING');
+  assert.equal(REGISTER_ERROR_CODES.DRAINING, 'REGISTER_DRAINING');
+});
+
 test('TypeScript shares the Go wire constants and bounded handshake contract', () => {
   assert.equal(PROTOCOL_VERSION, fixtures.version);
   assert.equal(FRAME_HEADER_SIZE, fixtures.header_size);
@@ -146,6 +159,7 @@ test('registration preserves all 64 generation bits and shares error codes', () 
     FORBIDDEN: 'REGISTER_FORBIDDEN',
     STALE: 'REGISTER_STALE',
     CAPACITY: 'REGISTER_CAPACITY',
+    DRAINING: 'REGISTER_DRAINING',
     CONFLICT: 'REGISTER_CONFLICT',
   });
   assert.equal(payload('REGISTER_ERROR').code, REGISTER_ERROR_CODES.STALE);

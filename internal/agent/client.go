@@ -39,10 +39,11 @@ type Client struct {
 	MaxFrame            uint32
 	MaxStreams          int
 	StreamTimeout       time.Duration
+	ShutdownTimeout     time.Duration
 }
 
 func NewClient(dialer transport.Transport) *Client {
-	return &Client{Transport: dialer, HandshakeTimeout: 10 * time.Second, RegistrationTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxFrame: protocol.MaxPayloadSize, MaxStreams: 32, StreamTimeout: 30 * time.Second}
+	return &Client{Transport: dialer, HandshakeTimeout: 10 * time.Second, RegistrationTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxFrame: protocol.MaxPayloadSize, MaxStreams: 32, StreamTimeout: 30 * time.Second, ShutdownTimeout: 10 * time.Second}
 }
 
 type Session struct {
@@ -60,6 +61,8 @@ type Session struct {
 	multiplexing        bool
 	flowControl         bool
 	heartbeat           bool
+	graceful            bool
+	shutdownTimeout     time.Duration
 	httpRegistered      bool
 	registeredHost      string
 	maxStreams          int
@@ -69,6 +72,9 @@ type Session struct {
 }
 
 func (c *Client) Connect(ctx context.Context, address, token string) (*Session, error) {
+	if c.ShutdownTimeout <= 0 || c.ShutdownTimeout > time.Minute {
+		return nil, ErrConfig
+	}
 	if c.MaxStreams < 1 || c.MaxStreams > 1024 || c.StreamTimeout <= 0 {
 		return nil, ErrConfig
 	}
@@ -103,7 +109,7 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		}
 		return frame.EncodeWithLimit(conn, limit)
 	}
-	offer := protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat}, MaxPayloadSize: c.MaxFrame}
+	offer := protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat, protocol.CapabilityGracefulShutdown}, MaxPayloadSize: c.MaxFrame}
 	frame, err := protocol.EncodeHello(offer)
 	if err != nil {
 		return nil, err
@@ -158,20 +164,33 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		return nil, err
 	}
 	keep = true
-	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), flowControl: slices.Contains(ack.Capabilities, protocol.CapabilityFlowControl), heartbeat: slices.Contains(ack.Capabilities, protocol.CapabilityHeartbeat), maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
+	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), flowControl: slices.Contains(ack.Capabilities, protocol.CapabilityFlowControl), heartbeat: slices.Contains(ack.Capabilities, protocol.CapabilityHeartbeat), graceful: slices.Contains(ack.Capabilities, protocol.CapabilityGracefulShutdown), shutdownTimeout: c.ShutdownTimeout, maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
 }
 
 // Wait owns the session reader until closure. Closing the session or cancelling
 // its parent context unblocks the read. Registered diagnostic sessions handle
 // negotiated heartbeat messages; HTTP sessions use ServeHTTP instead.
-func (s *Session) Wait() error {
+func (s *Session) Wait() error { return s.wait(nil, nil) }
+
+// WaitGraceful holds a registered diagnostic session on its lifetime context,
+// draining when the separate shutdown context is cancelled.
+func (s *Session) WaitGraceful(shutdown context.Context, draining func()) error {
+	return s.wait(shutdown, draining)
+}
+
+func (s *Session) wait(shutdown context.Context, draining func()) error {
 	registered := s.state.CompareAndSwap(2, 3)
 	if !registered && !s.state.CompareAndSwap(0, 3) {
 		return ErrSessionInUse
 	}
 	defer s.Close()
-	if registered && s.heartbeat {
-		conn, err := mux.New(s.ctx, s.conn, s.reader, s.streamOptions(true))
+	if registered && (s.heartbeat || s.graceful || shutdown != nil) {
+		opts := s.streamOptions(true)
+		if shutdown != nil {
+			opts.Shutdown = shutdown.Done()
+			opts.OnDraining = draining
+		}
+		conn, err := mux.New(s.ctx, s.conn, s.reader, opts)
 		if err != nil {
 			return err
 		}

@@ -162,3 +162,34 @@ func TestHTTPPendingRegistrationWaitIsBoundedAndCancelable(t *testing.T) {
 		})
 	}
 }
+
+func TestDrainRejectsRegistrationWithoutAdvancingWatermark(t *testing.T) {
+	s := NewServer(nil)
+	identity := auth.Identity{TunnelID: "tnl_fixture", ExpiresAt: time.Now().Add(time.Minute)}
+	conn, peer := net.Pipe()
+	defer conn.Close()
+	defer peer.Close()
+	owner, code := s.register(context.Background(), identity, "first", protocol.Register{TunnelID: identity.TunnelID, Generation: 7}, conn)
+	if code != "" {
+		t.Fatal(code)
+	}
+	s.mu.Lock()
+	s.draining = true
+	s.mu.Unlock()
+	if _, code = s.register(context.Background(), identity, "next", protocol.Register{TunnelID: identity.TunnelID, Generation: 8}, conn); code != protocol.RegisterDraining {
+		t.Fatal("draining registration admitted")
+	}
+	s.mu.RLock()
+	same := s.sessions[identity.TunnelID] == owner
+	s.mu.RUnlock()
+	if !same {
+		t.Fatal("rejected drain registration changed ownership")
+	}
+	s.unregister(owner)
+	s.mu.RLock()
+	generation := s.sessions[identity.TunnelID].Generation
+	s.mu.RUnlock()
+	if generation != 7 {
+		t.Fatal("cleanup lost watermark")
+	}
+}

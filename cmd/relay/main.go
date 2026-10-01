@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/radityama/portway/internal/auth"
 	"github.com/radityama/portway/internal/config"
@@ -46,6 +47,7 @@ func main() {
 	server.MaxPublicConnections = cfg.MaxPublicConnections
 	server.MaxStreams = uint32(cfg.MaxStreams)
 	server.StreamTimeout = cfg.StreamTimeout
+	server.ShutdownTimeout = cfg.ShutdownTimeout
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	listener, err := net.Listen("tcp", cfg.Address)
@@ -67,13 +69,26 @@ func main() {
 	}
 	logger.Info("relay_listening", "address", cfg.Address, "transport", "tls", "protocol", transport.ALPN)
 	logger.Info("public_https_listening", "address", cfg.PublicAddress)
-	life, cancel := context.WithCancel(ctx)
+	life, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 2)
 	go func() { done <- server.Serve(life, listener) }()
 	go func() { done <- server.ServeHTTPS(life, publicListener, publicConfig) }()
-	first := <-done
-	cancel()
-	second := <-done
+	var first, second error
+	select {
+	case <-ctx.Done():
+		shutdown, stopShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		started := time.Now()
+		if err := server.Shutdown(shutdown); err != nil {
+			logger.Warn("relay_shutdown_forced", "elapsed_ms", time.Since(started).Milliseconds())
+		}
+		stopShutdown()
+		cancel()
+		first, second = <-done, <-done
+	case first = <-done:
+		cancel()
+		second = <-done
+	}
 	if first != nil || second != nil {
 		logger.Error("relay_serve_failed")
 		os.Exit(1)

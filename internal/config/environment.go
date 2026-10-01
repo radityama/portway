@@ -15,6 +15,8 @@ var ErrEnvironment = errors.New("invalid Portway connection environment")
 type Lookup func(string) (string, bool)
 
 type Relay struct {
+	PublicManifest                                     string
+	TLSReloadInterval                                  time.Duration
 	APIURL, APICAFile, APITokenFile, RelayID           string
 	APITimeout                                         time.Duration
 	ReportInterval                                     time.Duration
@@ -106,6 +108,14 @@ func RelayEnvironment(env Lookup) (Relay, error) {
 	cfg.ReportTokenFile = value(env, "RELAY_REPORT_API_TOKEN_FILE", cfg.APITokenFile)
 	cfg.ReportID = value(env, "RELAY_REPORT_ID", cfg.RelayID)
 	if (cfg.ReportURL == "") != (cfg.ReportTokenFile == "") || cfg.ReportTokenFile != "" && !protocol.ValidTunnelID(cfg.ReportID) {
+		return Relay{}, ErrEnvironment
+	}
+	cfg.PublicManifest = value(env, "PUBLIC_TLS_MANIFEST_FILE", "")
+	cfg.TLSReloadInterval, err = duration(env, "PUBLIC_TLS_RELOAD_INTERVAL", "30s")
+	if err != nil || cfg.TLSReloadInterval < 100*time.Millisecond || cfg.TLSReloadInterval > 5*time.Minute {
+		return Relay{}, ErrEnvironment
+	}
+	if cfg.PublicManifest != "" && cfg.ReportTokenFile == "" {
 		return Relay{}, ErrEnvironment
 	}
 	cfg.ReportInterval, err = duration(env, "RELAY_API_REPORT_INTERVAL", "2s")

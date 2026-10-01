@@ -276,57 +276,129 @@ paths:
 
   /domains:
     get:
-      tags: [Domains]
+      tags:
+        - Domains
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - in: query
+          name: tunnelId
+          schema:
+            type: string
       responses:
         '200':
           $ref: '#/components/responses/DomainListResponse'
-        '401':
+        default: &id001
           $ref: '#/components/responses/ErrorResponse'
     post:
-      tags: [Domains]
+      tags:
+        - Domains
+      description: Reserve a scoped canonical hostname and return its one-time 24h DNS TXT proof. Keyed retries do not replay proof.
       security:
         - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        default: *id001
+        '201':
+          $ref: '#/components/responses/DomainChallengeResponse'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateDomainRequest'
-      responses:
-        '201':
-          $ref: '#/components/responses/DomainResponse'
-        '400':
-          $ref: '#/components/responses/ErrorResponse'
-        '401':
-          $ref: '#/components/responses/ErrorResponse'
-        '404':
-          $ref: '#/components/responses/ErrorResponse'
-        '409':
-          $ref: '#/components/responses/ErrorResponse'
-
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
   /domains/{domainId}:
     parameters:
       - $ref: '#/components/parameters/DomainId'
+    get:
+      tags:
+        - Domains
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/DomainResponse'
+        default: *id001
     delete:
-      tags: [Domains]
+      tags:
+        - Domains
+      description: Disable alias; retain hostname reservation and audit.
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: &id002
+              type: object
+              additionalProperties: false
       responses:
         '204':
-          description: Domain association removed.
-        '401':
-          $ref: '#/components/responses/ErrorResponse'
-        '404':
-          $ref: '#/components/responses/ErrorResponse'
+          description: Domain disabled.
+        default: *id001
+  /domains/{domainId}/challenge:
+    parameters:
+      - $ref: '#/components/parameters/DomainId'
+    post:
+      tags:
+        - Domains
+      description: Rotate one-time proof, removing active routing.
+      security:
+        - bearerAuth: []
+      responses:
+        default: *id001
+        '200':
+          $ref: '#/components/responses/DomainChallengeResponse'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: *id002
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+  /domains/{domainId}/verify:
+    parameters:
+      - $ref: '#/components/parameters/DomainId'
+    post:
+      tags:
+        - Domains
+      description: Resolve bounded DNS TXT outside transactions and recheck proof before commit.
+      security:
+        - bearerAuth: []
+      responses:
+        default: *id001
+        '200':
+          $ref: '#/components/responses/DomainResponse'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: *id002
+  /domains/{domainId}/activate:
+    parameters:
+      - $ref: '#/components/parameters/DomainId'
+    post:
+      tags:
+        - Domains
+      description: Enable verified alias policy; operator must provision matching valid TLS certificate.
+      security:
+        - bearerAuth: []
+      responses:
+        default: *id001
+        '200':
+          $ref: '#/components/responses/DomainResponse'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: *id002
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
 
   /relays:
     get:
@@ -734,6 +806,8 @@ components:
         status:
           type: string
           enum: [PENDING_VERIFICATION, VERIFIED, ACTIVE, DISABLED]
+        verificationExpiresAt:
+          { type: string, format: date-time, nullable: true }
         verifiedAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -782,9 +856,10 @@ components:
 
     CreateDomainRequest:
       type: object
+      additionalProperties: false
       required: [hostname, tunnelId]
       properties:
-        hostname: { type: string }
+        hostname: { type: string, maxLength: 220 }
         tunnelId: { type: string }
 
     LoginRequest:
@@ -1024,8 +1099,44 @@ components:
           format: date-time
         drainRequested:
           type: boolean
+        routes:
+          type: array
+          maxItems: 128
+          items: { $ref: '#/components/schemas/DomainRoute' }
+
+    DomainRoute:
+      type: object
+      additionalProperties: false
+      required: [hostname, tunnelId, generation, expiresAt]
+      properties:
+        hostname: { type: string, maxLength: 220 }
+        tunnelId: { type: string }
+        generation: { type: string, pattern: '^[1-9][0-9]{0,19}$' }
+        expiresAt: { type: string, format: date-time }
 
   responses:
+    DomainChallengeResponse:
+      description: Scoped domain and one-time DNS TXT proof. No raw proof retained for idempotency replay.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    required: [domain, verification]
+                    properties:
+                      domain: { $ref: '#/components/schemas/Domain' }
+                      verification:
+                        type: object
+                        required: [type, name, value]
+                        properties:
+                          type: { type: string, enum: [TXT] }
+                          name: { type: string }
+                          value: { type: string }
+
     ErrorResponse:
       description: API error.
       content:

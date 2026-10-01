@@ -38,6 +38,7 @@ type Options struct {
 	OnDraining        func()
 	Streaming         bool
 	WebSocket         bool
+	CustomDomains     bool
 }
 type Conn struct {
 	conn      net.Conn
@@ -115,9 +116,10 @@ func New(ctx context.Context, conn net.Conn, reader io.Reader, opts Options) (*C
 	c.mu.Unlock()
 	return c, nil
 }
-func (c *Conn) ActiveStreams() int { c.mu.Lock(); defer c.mu.Unlock(); return len(c.streams) }
-func (c *Conn) Streaming() bool    { return c.opts.Streaming }
-func (c *Conn) WebSocket() bool    { return c.opts.WebSocket }
+func (c *Conn) ActiveStreams() int  { c.mu.Lock(); defer c.mu.Unlock(); return len(c.streams) }
+func (c *Conn) Streaming() bool     { return c.opts.Streaming }
+func (c *Conn) CustomDomains() bool { return c.opts.CustomDomains }
+func (c *Conn) WebSocket() bool     { return c.opts.WebSocket }
 func (c *Conn) Close() {
 	c.once.Do(func() {
 		c.mu.Lock()
@@ -220,7 +222,7 @@ func (c *Conn) control(ctx context.Context, typ protocol.Type, id uint64, code s
 	return c.write(ctx, f)
 }
 func (c *Conn) startOpen(ctx context.Context, request protocol.OpenStream) (*Stream, error) {
-	if request.Upgrade != "" && !c.opts.WebSocket {
+	if (request.PublicHost != "" && !c.opts.CustomDomains) || request.Upgrade != "" && !c.opts.WebSocket {
 		return nil, ErrProtocol
 	}
 	if c.opts.Accept != nil || c.opts.Diagnostic {
@@ -377,7 +379,7 @@ func (c *Conn) Run() (result error) {
 			if err != nil {
 				return err
 			}
-			if request.Upgrade != "" && !c.opts.WebSocket {
+			if (request.PublicHost != "" && !c.opts.CustomDomains) || request.Upgrade != "" && !c.opts.WebSocket {
 				return ErrProtocol
 			}
 			c.mu.Lock()

@@ -709,3 +709,25 @@ Operator ingress/DNS must route public traffic to the assigned relay. Randomly
 balancing a hostname across nodes without an assignment-aware ingress is unsupported;
 no application-byte relay-to-relay proxy is introduced. Local E2E clients follow
 the newly emitted URL after recovery; production uses its normal ingress port.
+
+## 33. Phase 12 custom aliases and TLS
+
+Generated `p-<128-bit tunnel hash>.<PUBLIC_BASE_DOMAIN>` names and REGISTER_OK stay
+stable. A custom hostname is an API-verified ACTIVE alias, never agent input.
+Relay report replies lease exact hostname→tunnel/generation bindings for 15m;
+complete replacement removes disabled/reassigned aliases. Alias lookup is local
+and requires an unexpired snapshot plus the matching live owner generation and
+session lease. Unknown/expired aliases return 404; known unavailable owners return 503. Host/SNI equality and fixed-upstream request limits apply to aliases too.
+The local Host and X-Forwarded-Host use the requested alias, preserving application
+semantics. The generated `host` binding remains in OPEN_STREAM; negotiated
+`custom_domains` supplies validated `public_host` for the local alias Host. Legacy
+agents return 501 for aliases. No interrupted HTTP/WebSocket/SSE is replayed.
+
+Public TLS selects a valid cached wildcard/default or exact custom certificate.
+Custom SNI must have an authorized local alias and a matching operator certificate;
+unknown custom SNI fails the handshake. Reload happens outside TLS/request callbacks
+on a joined bounded timer; malformed/mismatched/expired replacements cannot replace
+a still-valid pair. Expiry rejects new TLS handshakes. A fresh alias snapshot can
+remove admission while already opened streams finish within their prior lease.
+Operators provision wildcard DNS and custom CNAME/A/AAAA toward the assigned node;
+DNS TXT proves ownership but does not configure ingress or certificates.

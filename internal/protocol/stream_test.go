@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -71,6 +72,8 @@ func TestStrictStreamMetadataAndCaps(t *testing.T) {
 func FuzzStreamPayloads(f *testing.F) {
 	upgrade, _ := EncodeOpenStream(1, websocketOpen())
 	f.Add(upgrade.Payload)
+	alias, _ := hex.DecodeString(loadFixtures(f).CustomDomains.Open.PayloadHex)
+	f.Add(alias)
 	for _, fixture := range loadFixtures(f).Frames {
 		if fixture.Type >= 0x10 && fixture.Type <= 0x16 {
 			payload, _ := hex.DecodeString(fixture.PayloadHex)
@@ -115,4 +118,40 @@ func FuzzStreamPayloads(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestAliasMetadataPreservesRegisteredBindingAndLegacyEncoding(t *testing.T) {
+	o := OpenStream{Method: "GET", Target: "/", Host: "p-bound.portway.localhost", Headers: [][]string{}, ContentLength: 0, PublicHost: "app.example.test"}
+	f, err := EncodeOpenStream(1, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeOpenStream(f)
+	if err != nil || decoded.Host != o.Host || decoded.PublicHost != o.PublicHost {
+		t.Fatal("alias changed registration binding", err)
+	}
+	for _, value := range []string{"app.example.test:443", "https://app.example.test", "*.example.test", "app.example.test.", "127.0.0.1"} {
+		o.PublicHost = value
+		if _, err := EncodeOpenStream(1, o); err == nil {
+			t.Fatal("unsafe alias accepted")
+		}
+	}
+	o.PublicHost = ""
+	f, err = EncodeOpenStream(1, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(f.Payload, []byte("public_host")) {
+		t.Fatal("legacy encoding changed")
+	}
+	for _, payload := range []string{
+		`{"method":"GET","target":"/","host":"p-bound.portway.localhost","headers":[],"content_length":0,"public_host":""}`,
+		`{"method":"GET","target":"/","host":"p-bound.portway.localhost","headers":[],"content_length":0,"public_host":null}`,
+		`{"method":"GET","target":"/","host":"p-bound.portway.localhost","headers":[],"content_length":0,"public_host":"app.test","public_host":"evil.test"}`,
+	} {
+		f.Payload = []byte(payload)
+		if _, err := DecodeOpenStream(f); err == nil {
+			t.Fatal("malformed alias metadata accepted")
+		}
+	}
 }

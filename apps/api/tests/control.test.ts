@@ -866,3 +866,144 @@ test('renewal reuses its reservation while new tunnels and saturated local socke
     renewed.value.data.generation,
   );
 });
+
+test('custom domains enforce scope, hashed ownership, one-time proof, routing generation and disable lifecycle', async () => {
+  let records: string[] = [];
+  const f = fixture({
+    dns: {
+      lookup: async (name) => {
+        assert.equal(name, '_portway-challenge.app.example.test');
+        return records;
+      },
+    },
+  });
+  const tunnel = await f.create(),
+    path = '/domains';
+  const input = { hostname: 'APP.example.test', tunnelId: tunnel.id };
+  assert.equal((await f.call(path, 'POST', input, viewer)).r.status, 403);
+  const created = await f.call(path, 'POST', input, owner, {
+    'Idempotency-Key': 'domain-create-001',
+  });
+  assert.equal(created.r.status, 201);
+  const d = created.value.data.domain,
+    proof = created.value.data.verification.value;
+  assert.equal(d.hostname, 'app.example.test');
+  assert.equal(d.status, 'PENDING_VERIFICATION');
+  assert.equal(
+    JSON.stringify([...f.store.domains.values()]).includes(proof),
+    false,
+  );
+  assert.equal(
+    (
+      await f.call(path, 'POST', input, owner, {
+        'Idempotency-Key': 'domain-create-001',
+      })
+    ).value.error.code,
+    'CREDENTIAL_ALREADY_ISSUED',
+  );
+  assert.equal(
+    (await f.call('/domains/' + d.id, 'GET', undefined, foreign)).r.status,
+    404,
+  );
+  assert.equal(
+    (await f.call('/domains/' + d.id + '/activate', 'POST')).r.status,
+    409,
+  );
+  assert.equal(
+    (await f.call('/domains/' + d.id + '/verify', 'POST')).r.status,
+    409,
+  );
+  assert.equal(f.store.domains.get(d.id)!.verifiedAt, null);
+  records = [proof];
+  const results = await Promise.all([
+    f.call('/domains/' + d.id + '/verify', 'POST'),
+    f.call('/domains/' + d.id + '/verify', 'POST'),
+  ]);
+  assert.ok(results.every((r) => r.r.status === 200));
+  assert.equal(
+    f.store.audit.filter((a) => a.action === 'domain.verify').length,
+    1,
+  );
+  assert.equal(
+    (await f.call('/domains/' + d.id + '/activate', 'POST')).value.data.domain
+      .status,
+    'ACTIVE',
+  );
+  assert.deepEqual(f.store.domainRoutes('rel_a'), []);
+  const assigned = await f.call('/tunnels/' + tunnel.id + '/connect', 'POST');
+  assert.equal(assigned.r.status, 200);
+  assert.equal(
+    f.store.domainRoutes('rel_a')[0]!.generation,
+    assigned.value.data.generation,
+  );
+  assert.equal(
+    (await f.call('/domains?tunnelId=' + tunnel.id)).value.data.domains.length,
+    1,
+  );
+  assert.equal(
+    (await f.call('/domains/' + d.id)).value.data.domain.verificationHash,
+    undefined,
+  );
+  assert.equal(
+    (await f.call('/domains/' + d.id, 'DELETE', undefined, viewer)).r.status,
+    403,
+  );
+  assert.equal((await f.call('/domains/' + d.id, 'DELETE')).r.status, 204);
+  assert.deepEqual(f.store.domainRoutes('rel_a'), []);
+  assert.equal(
+    (await f.call('/domains', 'POST', input)).value.error.code,
+    'DOMAIN_ALREADY_ASSIGNED',
+  );
+  assert.equal(
+    (await f.call('/domains/' + d.id + '/verify', 'POST')).r.status,
+    409,
+  );
+  const rotated = await f.call('/domains/' + d.id + '/challenge', 'POST');
+  assert.equal(rotated.r.status, 200);
+  assert.notEqual(rotated.value.data.verification.value, proof);
+  assert.equal(
+    (await f.call('/domains/' + d.id + '/verify', 'POST')).r.status,
+    409,
+  );
+  records = [rotated.value.data.verification.value];
+  assert.equal(
+    (await f.call('/domains/' + d.id + '/verify', 'POST')).r.status,
+    200,
+  );
+  await f.call('/tunnels/' + tunnel.id + '/revoke', 'POST');
+  assert.equal(
+    (await f.call('/domains/' + d.id + '/activate', 'POST')).value.error.code,
+    'TUNNEL_REVOKED',
+  );
+});
+
+test('domain DNS commit rejects rotated proof and expired challenges without holding mutation admission', async () => {
+  let resolve!: (records: string[]) => void;
+  const f = fixture({
+    dns: {
+      lookup: () =>
+        new Promise<string[]>((r) => {
+          resolve = r;
+        }),
+    },
+  });
+  const tunnel = await f.create(),
+    created = await f.call('/domains', 'POST', {
+      hostname: 'race.example.test',
+      tunnelId: tunnel.id,
+    });
+  const d = created.value.data.domain,
+    proof = created.value.data.verification.value;
+  const verifying = f.call('/domains/' + d.id + '/verify', 'POST');
+  while (!resolve) await new Promise((r) => setTimeout(r, 1));
+  const rotated = await f.call('/domains/' + d.id + '/challenge', 'POST');
+  assert.equal(rotated.r.status, 200);
+  resolve([proof]);
+  assert.equal((await verifying).r.status, 409);
+  assert.equal(f.store.domains.get(d.id)!.status, 'PENDING_VERIFICATION');
+  f.store.domains.get(d.id)!.verificationExpiresAt = '1970-01-01T00:00:00.000Z';
+  assert.equal(
+    (await f.call('/domains/' + d.id + '/verify', 'POST')).r.status,
+    409,
+  );
+});

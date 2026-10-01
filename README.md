@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–11 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. The dashboard remains a skeleton.
+Phases 0–12 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. Custom domains now use DNS TXT ownership proofs, current-generation relay aliases and reloadable certificates with local issuance and renewal. The dashboard remains a skeleton.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Phase 12](./docs/PHASE_12.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -273,3 +273,94 @@ and local socket/stream/registry limits remain authoritative.
 instances. `pnpm test:fleet` checks actual two-node graceful drain, Redis outage
 isolation, fresh-report transport failover, increasing generations and no replay.
 Both run in `make check` and CI. See [Phase 11](./docs/PHASE_11.md).
+
+## Domains and certificates (Phase 12)
+
+Create a domain with authenticated `POST /api/v1/domains` and
+`{"hostname":"app.example.test","tunnelId":"tnl_local_dev"}`. Save the returned
+one-time verification value, publish it at the returned TXT name, then call
+`POST /domains/:id/verify` and `/activate` under the same `/api/v1` prefix.
+Ownership DNS and the A/AAAA/CNAME records that send traffic to the assigned relay
+are separate steps. `ACTIVE` enables routing policy; the relay also needs a valid
+certificate. VIEWER can read; MEMBER/ADMIN/OWNER can change domains within their
+organization. Delete disables the association and retains its unique reservation.
+`/challenge` rotates proof and can re-enable a disabled association after fresh
+verification. Hashes are stored; raw TXT values are returned once and never logged.
+
+Relay reports distribute complete alias snapshots every 2s by default. Public
+requests use local policy bound to the current tunnel generation and session
+expiry. Disable/revoke/reassignment removes an alias on the next successful report;
+an API outage preserves its last snapshot for at most 15 minutes, shortened by
+session expiry. A certificate alone cannot authorize a hostname. Agents negotiate
+`custom_domains` to preserve the application Host header; older agents return 501
+for aliases and continue serving their generated hostname.
+
+For an explicit local CA and renewable wildcard/custom certificate, run:
+
+```bash
+make build
+bin/portway-cert init --dir .tmp/certificates
+bin/portway-cert issue --dir .tmp/certificates \
+  --hosts '*.portway.localhost,app.example.test' --days 30 --renew-before 168h
+```
+
+Set `PUBLIC_TLS_MANIFEST_FILE` to the absolute path of
+`.tmp/certificates/certificate.json` on the relay. Its optional `default` entry
+redirects the wildcard pair, and `domains` supplies exact custom-host pairs.
+Enable authenticated relay reporting as described above; it supplies domain
+policy. Every participating relay needs the appropriate certificate deployment.
+The tool publishes immutable PEM bundles and atomically replaces the manifest.
+Run the same issue command periodically: a valid matching pair outside its renewal
+window is reused; a near-expiry pair gets a new leaf/key under the existing CA.
+It preserves agent credentials and does not install system trust. After publishing
+ownership proof and activating the alias, test with:
+
+```bash
+curl --cacert .tmp/certificates/ca.pem \
+  --resolve app.example.test:8443:127.0.0.1 https://app.example.test:8443/
+```
+
+Browser clients must explicitly trust this development root. When using this
+manifest with `make dev`, also set `PUBLIC_TLS_CA_FILE` to its `ca.pem` so development
+readiness trusts the renewed wildcard pair.
+
+Alternatively, mkcert can manage local trust and supply PEM files:
+
+```bash
+mkdir -p .tmp/mkcert
+mkcert -install
+mkcert -cert-file .tmp/mkcert/cert.pem -key-file .tmp/mkcert/key.pem \
+  '*.portway.localhost' app.example.test
+chmod 600 .tmp/mkcert/key.pem
+```
+
+Point `PUBLIC_TLS_CERT_FILE` and `PUBLIC_TLS_KEY_FILE` to those wildcard files.
+Write a private (0600), regular manifest alongside them, then set
+`PUBLIC_TLS_MANIFEST_FILE` to it:
+
+```json
+{
+  "domains": [
+    {
+      "hostname": "app.example.test",
+      "certFile": "cert.pem",
+      "keyFile": "key.pem"
+    }
+  ]
+}
+```
+
+Relative PEM paths use the manifest directory. `PUBLIC_TLS_RELOAD_INTERVAL`
+defaults to 30s (100ms–5m). The loader validates coverage, validity, server usage
+and matching private keys before swapping its cache. Failed renewal keeps the
+prior valid cache; expired certificates reject new TLS handshakes. Private keys
+and manifests must be private regular files, and symlinks are rejected. The
+request/TLS path reads neither files nor the API, database or DNS.
+
+Production can deploy PEM bundles from an external ACME issuer using the same
+atomic manifest workflow. Operators configure public DNS and ingress to follow
+the assigned node, client trust and issuer scheduling. ACME account automation
+remains future work. Retired local bundles are retained for rollback; remove them
+only after confirming that no deployed manifest references them. Domain records
+are initially capped at 128, including disabled reservations. See
+[Phase 12](./docs/PHASE_12.md) for verification and operational boundaries.

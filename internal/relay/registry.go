@@ -44,7 +44,7 @@ func (s *Server) Lookup(hostname string) (Session, bool) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	id, ok := s.hostnames[hostname]
+	id, ok := s.resolveLocked(hostname)
 	if !ok {
 		return Session{}, false
 	}

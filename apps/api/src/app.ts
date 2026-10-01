@@ -423,6 +423,105 @@ export function createApp(store: ControlBackend = new ControlStore()) {
       meta: {},
     });
   });
+  app.get('/api/v1/domains', async (c) => {
+    const q = query(c.req.url, ['cursor', 'limit', 'tunnelId']),
+      page = pagination(q),
+      tunnelId = q.get('tunnelId');
+    if (tunnelId !== null) id(tunnelId);
+    const result = await store.listDomains(
+      c.get('principal'),
+      tunnelId,
+      page.cursor,
+      page.limit,
+    );
+    return c.json({
+      data: { domains: result.items },
+      error: null,
+      meta: { nextCursor: result.nextCursor },
+    });
+  });
+  app.get('/api/v1/domains/:id', async (c) => {
+    query(c.req.url, []);
+    return c.json({
+      data: {
+        domain: await store.domain(c.get('principal'), id(c.req.param('id'))),
+      },
+      error: null,
+      meta: {},
+    });
+  });
+  app.post('/api/v1/domains', async (c) => {
+    query(c.req.url, []);
+    const b = await body(c.req.raw),
+      p = c.get('principal');
+    fields(b.value, ['hostname', 'tunnelId']);
+    await store.tunnel(p, id(b.value.tunnelId));
+    await store.mutate(p);
+    const result = await store.mutation(
+      p,
+      'POST',
+      c.req.path,
+      b.raw,
+      c.req.header('Idempotency-Key'),
+      async () => ({ status: 201, data: await store.createDomain(p, b.value) }),
+      true,
+    );
+    return c.json(
+      { data: result.data, error: null, meta: {} },
+      result.status as ContentfulStatusCode,
+    );
+  });
+  for (const action of [
+    'challenge',
+    'verify',
+    'activate',
+    'disable',
+  ] as const) {
+    const handler = async (
+      c: Context<{ Variables: { principal: Principal } }>,
+    ) => {
+      query(c.req.url, []);
+      const p = c.get('principal'),
+        domainId = id(c.req.param('id'));
+      await store.domain(p, domainId);
+      await store.mutate(p);
+      const b = await body(c.req.raw, true);
+      fields(b.value, []);
+      if (action === 'verify')
+        return c.json({
+          data: await store.verifyDomain(p, domainId),
+          error: null,
+          meta: {},
+        });
+      const result = await store.mutation(
+        p,
+        c.req.method,
+        c.req.path,
+        b.raw,
+        c.req.header('Idempotency-Key'),
+        async () => {
+          if (action === 'disable') {
+            await store.disableDomain(p, domainId);
+            return { status: 204, data: null };
+          }
+          return {
+            status: 200,
+            data:
+              action === 'challenge'
+                ? await store.challengeDomain(p, domainId)
+                : await store.activateDomain(p, domainId),
+          };
+        },
+        action === 'challenge',
+        domainId,
+      );
+      return result.status === 204
+        ? c.body(null, 204)
+        : c.json({ data: result.data, error: null, meta: {} });
+    };
+    if (action === 'disable') app.delete('/api/v1/domains/:id', handler);
+    else app.post('/api/v1/domains/:id/' + action, handler);
+  }
   for (const action of ['register', 'report', 'drain', 'activate'] as const) {
     app.post('/api/v1/internal/relays/:relayId/' + action, async (c) => {
       query(c.req.url, []);
@@ -464,8 +563,6 @@ export function createApp(store: ControlBackend = new ControlStore()) {
     });
   });
   for (const path of [
-    '/api/v1/domains',
-    '/api/v1/domains/*',
     '/api/v1/tunnels/:id/logs',
     '/api/v1/tunnels/:id/metrics',
   ])

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/radityama/portway/internal/auth"
+	"github.com/radityama/portway/internal/control"
 	"github.com/radityama/portway/internal/mux"
 	"github.com/radityama/portway/internal/protocol"
 	"github.com/radityama/portway/internal/transport"
@@ -46,6 +47,7 @@ type Server struct {
 	mu                   sync.RWMutex
 	sessions             map[string]*registryEntry
 	hostnames            map[string]string
+	domains              map[string]control.DomainRoute
 	active               map[net.Conn]struct{}
 	draining             bool
 	shutdownStarted      bool
@@ -63,7 +65,7 @@ func NewServer(logger *slog.Logger) *Server {
 	return &Server{Logger: logger, MaxConnections: 128, MaxPublicConnections: 128, HandshakeTimeout: 10 * time.Second,
 		RegistrationTimeout: 10 * time.Second, PublicBaseDomain: "portway.localhost", MaxTunnels: 1024,
 		ReadIdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxStreams: 32, StreamTimeout: 30 * time.Second,
-		MaxFrame: protocol.MaxPayloadSize, ShutdownTimeout: 10 * time.Second, sessions: make(map[string]*registryEntry), hostnames: make(map[string]string), active: make(map[net.Conn]struct{}), httpServers: make(map[*http.Server]*limitedListener), changed: make(chan struct{}), shutdownDone: make(chan struct{})}
+		MaxFrame: protocol.MaxPayloadSize, ShutdownTimeout: 10 * time.Second, sessions: make(map[string]*registryEntry), hostnames: make(map[string]string), domains: make(map[string]control.DomainRoute), active: make(map[net.Conn]struct{}), httpServers: make(map[*http.Server]*limitedListener), changed: make(chan struct{}), shutdownDone: make(chan struct{})}
 }
 
 func (s *Server) validate() error {
@@ -188,7 +190,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	if err != nil || remote.MaxPayloadSize < protocol.MaxHandshakePayloadSize {
 		return protocol.ErrInvalidHandshake
 	}
-	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat, protocol.CapabilityGracefulShutdown, protocol.CapabilityStreaming, protocol.CapabilityWebSocket}, MaxPayloadSize: s.MaxFrame})
+	ack, err := protocol.Negotiate(remote, protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat, protocol.CapabilityGracefulShutdown, protocol.CapabilityStreaming, protocol.CapabilityWebSocket, protocol.CapabilityCustomDomains}, MaxPayloadSize: s.MaxFrame})
 	if err != nil {
 		return err
 	}
@@ -272,7 +274,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	graceful := slices.Contains(ack.Capabilities, protocol.CapabilityGracefulShutdown)
 	httpMode := request.Protocol == "http"
 	if httpMode || heartbeat || graceful {
-		streams, err = mux.New(ctx, conn, reader, mux.Options{MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt, Diagnostic: !httpMode, Heartbeat: heartbeat, GracefulShutdown: graceful, ShutdownTimeout: s.ShutdownTimeout, Streaming: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), WebSocket: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming) && slices.Contains(ack.Capabilities, protocol.CapabilityWebSocket)})
+		streams, err = mux.New(ctx, conn, reader, mux.Options{MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt, Diagnostic: !httpMode, Heartbeat: heartbeat, GracefulShutdown: graceful, ShutdownTimeout: s.ShutdownTimeout, CustomDomains: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityCustomDomains), Streaming: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), WebSocket: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming) && slices.Contains(ack.Capabilities, protocol.CapabilityWebSocket)})
 		if err != nil {
 			return err
 		}

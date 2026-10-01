@@ -593,3 +593,23 @@ with a higher durable generation. No failed application stream migrates or repla
 Deployment ingress/DNS must follow the assigned relay for each stable hostname;
 cross-node application proxying and ingress-controller installation are outside
 this phase. There is no per-public-request API/PostgreSQL/Redis query.
+
+## 28. Phase 12 domain and certificate boundary
+
+The API owns scoped domain records and expiring hashed DNS TXT challenges. A
+bounded DNS verification call outside database transactions proves hostname
+ownership; activation enables alias policy. Authenticated relay reports obtain
+complete expiring alias snapshots tied to current tunnel generation/assignment.
+The relay atomically replaces its local alias map and checks generation/lease
+alongside its existing registry before forwarding. No DNS/API/database miss path
+is introduced for public requests. Policy deletion/revocation propagates on a
+fresh report; during outages existing snapshots/session leases bound stale use.
+
+Operators own PEM certificate deployment. One joined finite reload worker reads
+private bounded local files, validates coverage/expiry/key pairs and atomically
+publishes in-memory certificates. TLS selects only authorized custom aliases;
+certificate possession alone grants no tunnel route. Failed renewals preserve the
+last valid certificate until expiry. Local tooling issues/renews from a stable
+private development CA; mkcert or an external production issuer can supply PEM.
+CA trust installation, production DNS/ingress and ACME account automation remain
+operator responsibilities. Application bytes continue through the local mux.

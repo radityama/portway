@@ -18,6 +18,7 @@ const (
 )
 
 type OpenStream struct {
+	PublicHost    string     `json:"public_host,omitempty"`
 	Method        string     `json:"method"`
 	Target        string     `json:"target"`
 	Host          string     `json:"host"`
@@ -47,14 +48,14 @@ func ForbiddenHeader(name string) bool {
 	return false
 }
 func (o OpenStream) Validate() error {
-	if !HTTPToken(o.Method) || len(o.Method) > 32 || strings.EqualFold(o.Method, "CONNECT") || !ValidHostname(o.Host) || len(o.Target) == 0 || len(o.Target) > 8192 || o.Target[0] != '/' || o.ContentLength < -1 || o.ContentLength > MaxRequestBodySize || o.Headers == nil || len(o.Headers) > 128 {
+	if (o.PublicHost != "" && !ValidHostname(o.PublicHost)) || !HTTPToken(o.Method) || len(o.Method) > 32 || strings.EqualFold(o.Method, "CONNECT") || !ValidHostname(o.Host) || len(o.Target) == 0 || len(o.Target) > 8192 || o.Target[0] != '/' || o.ContentLength < -1 || o.ContentLength > MaxRequestBodySize || o.Headers == nil || len(o.Headers) > 128 {
 		return ErrInvalidHandshake
 	}
 	u, err := url.ParseRequestURI(o.Target)
 	if err != nil || u.IsAbs() || u.Host != "" || u.Fragment != "" || !utf8.ValidString(o.Target) {
 		return ErrInvalidHandshake
 	}
-	total := len(o.Target) + len(o.Host) + len(o.Method)
+	total := len(o.Target) + len(o.Host) + len(o.PublicHost) + len(o.Method)
 	for _, pair := range o.Headers {
 		if len(pair) != 2 || !HTTPToken(pair[0]) || textproto.CanonicalMIMEHeaderKey(pair[0]) != pair[0] || ForbiddenHeader(pair[0]) || !utf8.ValidString(pair[1]) {
 			return ErrInvalidHandshake
@@ -106,7 +107,7 @@ func DecodeOpenStream(f Frame) (OpenStream, error) {
 		return o, ErrInvalidHandshake
 	}
 	keys := []string{"method", "target", "host", "headers", "content_length"}
-	allowed := append(append([]string{}, keys...), "upgrade")
+	allowed := append(append([]string{}, keys...), "upgrade", "public_host")
 	if err := decodeObject(f.Payload, &o, allowed, keys, allowed); err != nil {
 		return OpenStream{}, err
 	}
@@ -114,6 +115,9 @@ func DecodeOpenStream(f Frame) (OpenStream, error) {
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(f.Payload, &fields)
 	if _, exists := fields["upgrade"]; exists && o.Upgrade == "" {
+		return OpenStream{}, ErrInvalidHandshake
+	}
+	if _, exists := fields["public_host"]; exists && o.PublicHost == "" {
 		return OpenStream{}, ErrInvalidHandshake
 	}
 	if err := o.Validate(); err != nil {

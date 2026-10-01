@@ -106,3 +106,21 @@ export type Assignment = {
   generation: string;
   publicHostname: string;
 };
+
+export type Domain = {
+  id: string;
+  tunnelId: string | null;
+  hostname: string;
+  status: 'PENDING_VERIFICATION' | 'VERIFIED' | 'ACTIVE' | 'DISABLED';
+  verifiedAt: string | null;
+  verificationExpiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type DomainRecord = Domain & { verificationHash: string | null };
+export type DomainRoute = {
+  hostname: string;
+  tunnelId: string;
+  generation: string;
+  expiresAt: string;
+};

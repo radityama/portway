@@ -1,3 +1,4 @@
+import { DNSProof } from './domains.ts';
 import { existsSync } from 'node:fs';
 import { loadEnvFile } from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -52,7 +53,9 @@ export function parseEnvironment(source: NodeJS.ProcessEnv) {
   const defaultSeed = resolve(root, '.tmp/dev/control-seed.json');
   const configuredSeed =
     source.API_SEED_FILE ?? (existsSync(defaultSeed) ? defaultSeed : '');
+  if (source.API_DNS_SERVER) new DNSProof(source.API_DNS_SERVER);
   return {
+    dnsServer: source.API_DNS_SERVER,
     apiPort,
     storage,
     seedFile: configuredSeed ? resolve(root, configuredSeed) : '',

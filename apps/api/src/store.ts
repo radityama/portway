@@ -1,4 +1,16 @@
 import {
+  DNSProof,
+  DOMAIN_LIMIT,
+  ROUTE_TTL,
+  assertChallenge,
+  challenge,
+  domainDto,
+  domainName,
+  proofHash,
+  verificationRequired,
+  type TXTResolver,
+} from './domains.ts';
+import {
   MemoryPresence,
   choose,
   effective,
@@ -11,6 +23,8 @@ import type { Awaitable, MutationResult, TunnelFilters } from './backend.ts';
 import { isIP } from 'node:net';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type {
+  DomainRecord,
+  DomainRoute,
   ApiKey,
   Assignment,
   Credential,
@@ -84,6 +98,8 @@ export class ControlStore {
   readonly presence: MemoryPresence;
   private pending = Promise.resolve();
   private waiting = 0;
+  readonly dns: TXTResolver;
+  readonly domains = new Map<string, DomainRecord>();
   readonly users = new Map<string, User>();
   readonly organizations = new Map<string, Organization>();
   readonly memberships: Membership[] = [];
@@ -105,6 +121,8 @@ export class ControlStore {
   constructor(
     options: {
       seed?: Seed;
+      dns?: TXTResolver;
+      dnsServer?: string;
       presence?: MemoryPresence;
       baseDomain?: string;
       credentialTTL?: number;
@@ -113,6 +131,7 @@ export class ControlStore {
     } = {},
   ) {
     this.now = options.now ?? Date.now;
+    this.dns = options.dns ?? new DNSProof(options.dnsServer);
     this.presence = options.presence ?? new MemoryPresence(this.now);
     this.baseDomain = hostname(options.baseDomain ?? 'portway.localhost');
     if (
@@ -364,7 +383,10 @@ export class ControlStore {
           sequence(body.sequence),
         )
       : this.presence.register(relayId, report);
-    return acknowledgement(value, relay.status === 'DRAINING');
+    return {
+      ...acknowledgement(value, relay.status === 'DRAINING'),
+      routes: this.domainRoutes(relayId),
+    };
   }
   relayPolicy(bearer: string, relayId: string, drain: boolean) {
     this.relayAccess(bearer, relayId);
@@ -565,6 +587,179 @@ export class ControlStore {
     this.recheck(p);
     if (p.sessionHash) this.sessions.get(p.sessionHash)!.revoked = true;
     else this.keys.get(p.keyHash)!.revokedAt = this.iso();
+  }
+  private domainRecord(p: Principal, domainId: string) {
+    this.recheck(p);
+    const d = this.domains.get(domainId);
+    const t = d?.tunnelId ? this.tunnels.get(d.tunnelId) : undefined;
+    if (
+      !d ||
+      !t ||
+      this.projects.get(t.projectId)?.organizationId !== p.organizationId
+    )
+      throw new ApiFailure(404, 'DOMAIN_NOT_FOUND', 'Domain not found');
+    return d;
+  }
+  domain(p: Principal, domainId: string) {
+    return domainDto(this.domainRecord(p, domainId));
+  }
+  listDomains(
+    p: Principal,
+    tunnelId: string | null,
+    cursor: string | undefined,
+    limit: number,
+  ) {
+    if (tunnelId) this.tunnel(p, tunnelId);
+    const values = [...this.domains.values()]
+      .filter((d) => {
+        const t = d.tunnelId ? this.tunnels.get(d.tunnelId) : undefined;
+        return (
+          t &&
+          this.projects.get(t.projectId)?.organizationId === p.organizationId &&
+          (!tunnelId || d.tunnelId === tunnelId)
+        );
+      })
+      .map(domainDto);
+    return this.page(p, 'domains', values, cursor, limit, tunnelId ?? '');
+  }
+  createDomain(p: Principal, body: Record<string, unknown>) {
+    this.mutate(p);
+    fields(body, ['hostname', 'tunnelId']);
+    const t = this.tunnel(p, id(body.tunnelId));
+    if (t.status === 'REVOKED')
+      throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+    const host = domainName(body.hostname, this.baseDomain);
+    if ([...this.domains.values()].some((d) => d.hostname === host))
+      throw new ApiFailure(
+        409,
+        'DOMAIN_ALREADY_ASSIGNED',
+        'Domain already assigned',
+      );
+    this.capacity(
+      this.domains.size,
+      Math.min(DOMAIN_LIMIT, this.limits.resources),
+    );
+    const proof = challenge(host, this.now());
+    const d: DomainRecord = {
+      id: opaque('dom'),
+      tunnelId: t.id,
+      hostname: host,
+      status: 'PENDING_VERIFICATION',
+      verifiedAt: null,
+      verificationHash: proof.verificationHash,
+      verificationExpiresAt: proof.verificationExpiresAt,
+      createdAt: this.iso(),
+      updatedAt: this.iso(),
+    };
+    this.domains.set(d.id, d);
+    this.record(p, 'domain.create', d.id);
+    return { domain: domainDto(d), verification: proof.verification };
+  }
+  challengeDomain(p: Principal, domainId: string) {
+    this.mutate(p);
+    const d = this.domainRecord(p, domainId),
+      t = this.tunnel(p, d.tunnelId!);
+    if (t.status === 'REVOKED')
+      throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+    const proof = challenge(d.hostname, this.now());
+    Object.assign(d, {
+      status: 'PENDING_VERIFICATION',
+      verifiedAt: null,
+      verificationHash: proof.verificationHash,
+      verificationExpiresAt: proof.verificationExpiresAt,
+      updatedAt: this.iso(),
+    });
+    this.record(p, 'domain.challenge', d.id);
+    return { domain: domainDto(d), verification: proof.verification };
+  }
+  async verifyDomain(p: Principal, domainId: string) {
+    this.mutate(p);
+    const old = this.domainRecord(p, domainId);
+    if (this.tunnel(p, old.tunnelId!).status === 'REVOKED')
+      throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+    if (old.status === 'VERIFIED' || old.status === 'ACTIVE')
+      return { domain: domainDto(old) };
+    assertChallenge(old, this.now());
+    const expected = old.verificationHash;
+    const records = await this.dns.lookup('_portway-challenge.' + old.hostname);
+    if (!records.some((value) => proofHash(value) === expected))
+      verificationRequired();
+    const result = await this.mutation(
+      p,
+      'INTERNAL',
+      '/domains/' + domainId + '/verify',
+      '',
+      undefined,
+      () => {
+        this.mutate(p);
+        const current = this.domainRecord(p, domainId);
+        if (current.verificationHash !== expected) verificationRequired();
+        if (current.status === 'VERIFIED' || current.status === 'ACTIVE')
+          return { status: 200, data: { domain: domainDto(current) } };
+        assertChallenge(current, this.now());
+        if (this.tunnel(p, current.tunnelId!).status === 'REVOKED')
+          throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+        current.status = 'VERIFIED';
+        current.verifiedAt = this.iso();
+        current.updatedAt = this.iso();
+        this.record(p, 'domain.verify', domainId);
+        return { status: 200, data: { domain: domainDto(current) } };
+      },
+    );
+    return result.data as { domain: ReturnType<typeof domainDto> };
+  }
+  activateDomain(p: Principal, domainId: string) {
+    this.mutate(p);
+    const d = this.domainRecord(p, domainId);
+    if (this.tunnel(p, d.tunnelId!).status === 'REVOKED')
+      throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+    if (
+      !['VERIFIED', 'ACTIVE'].includes(d.status) ||
+      !d.verificationHash ||
+      !d.verifiedAt
+    )
+      verificationRequired();
+    if (d.status !== 'ACTIVE') {
+      d.status = 'ACTIVE';
+      d.updatedAt = this.iso();
+      this.record(p, 'domain.activate', domainId);
+    }
+    return { domain: domainDto(d) };
+  }
+  disableDomain(p: Principal, domainId: string) {
+    this.mutate(p);
+    const d = this.domainRecord(p, domainId);
+    if (d.status !== 'DISABLED') {
+      Object.assign(d, {
+        status: 'DISABLED',
+        verificationHash: null,
+        verificationExpiresAt: null,
+        verifiedAt: null,
+        updatedAt: this.iso(),
+      });
+      this.record(p, 'domain.disable', domainId);
+    }
+  }
+  domainRoutes(relayId: string): DomainRoute[] {
+    return [...this.domains.values()].flatMap((d) => {
+      const t = d.tunnelId ? this.tunnels.get(d.tunnelId) : undefined;
+      return d.status === 'ACTIVE' &&
+        d.verificationHash &&
+        d.verifiedAt &&
+        t &&
+        t.status !== 'REVOKED' &&
+        t.relayId === relayId &&
+        t.generation !== '0'
+        ? [
+            {
+              hostname: d.hostname,
+              tunnelId: t.id,
+              generation: t.generation,
+              expiresAt: new Date(this.now() + ROUTE_TTL).toISOString(),
+            },
+          ]
+        : [];
+    });
   }
   createProject(p: Principal, body: Record<string, unknown>) {
     this.mutate(p);
@@ -901,7 +1096,9 @@ export class ControlStore {
           const tunnel = this.tunnel(p, prior.resource);
           if (tunnel.status === 'REVOKED' && path.endsWith('/connect'))
             throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
-        } else if (prior.resource?.startsWith('prj_') && method !== 'DELETE')
+        } else if (prior.resource?.startsWith('dom_'))
+          this.domain(p, prior.resource);
+        else if (prior.resource?.startsWith('prj_') && method !== 'DELETE')
           this.project(p, prior.resource);
         if (prior.secret)
           throw new ApiFailure(
@@ -915,10 +1112,15 @@ export class ControlStore {
         this.capacity(this.idempotency.size, this.limits.idempotency);
       const result = await operation();
       const resultData = result.data as {
+        domain?: { id: string };
         project?: { id: string };
         tunnel?: { id: string };
       } | null;
-      resource = resource ?? resultData?.project?.id ?? resultData?.tunnel?.id;
+      resource =
+        resource ??
+        resultData?.domain?.id ??
+        resultData?.project?.id ??
+        resultData?.tunnel?.id;
       if (identifier)
         this.idempotency.set(identifier, {
           fingerprint,

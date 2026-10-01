@@ -32,6 +32,9 @@ type protocolFixtures struct {
 		WindowUpdateSize        int         `json:"window_update_size"`
 		ConnectionUpdate        wireFixture `json:"connection_update"`
 	} `json:"flow_control"`
+	CustomDomains struct {
+		Open wireFixture `json:"open"`
+	} `json:"custom_domains"`
 	Frames    []wireFixture `json:"frames"`
 	WebSocket struct {
 		Open wireFixture `json:"open"`
@@ -71,7 +74,7 @@ func TestGoldenWireFixtures(t *testing.T) {
 	capabilities := map[string]Capability{
 		"MULTIPLEXING": CapabilityMultiplexing, "FLOW_CONTROL": CapabilityFlowControl,
 		"HEARTBEAT": CapabilityHeartbeat, "GRACEFUL_SHUTDOWN": CapabilityGracefulShutdown,
-		"STREAMING": CapabilityStreaming, "WEBSOCKET": CapabilityWebSocket,
+		"STREAMING": CapabilityStreaming, "WEBSOCKET": CapabilityWebSocket, "CUSTOM_DOMAINS": CapabilityCustomDomains,
 	}
 	if len(capabilities) != len(fixtures.Capabilities) {
 		t.Fatal("capability fixture mismatch")
@@ -137,5 +140,38 @@ func TestDocumentedWireTypes(t *testing.T) {
 		if err != nil || types[Type(value)] != string(match[2]) {
 			t.Fatalf("documented type differs from Go: %s", match[0])
 		}
+	}
+}
+
+func TestAliasGoldenWireFixture(t *testing.T) {
+	fixture := loadFixtures(t).CustomDomains.Open
+	wire, err := hex.DecodeString(fixture.WireHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := Decode(bytes.NewReader(wire))
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, err := DecodeOpenStream(frame)
+	if err != nil || open.PublicHost != "app.example.test" || open.Host != "p-bound.portway.localhost" {
+		t.Fatal("alias fixture mismatch", err)
+	}
+	encoded, err := EncodeOpenStream(1, open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := encoded.Encode(&output); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(wire, output.Bytes()) {
+		t.Fatal("alias wire mismatch")
+	}
+	offer := Hello{Version: Version, Capabilities: []Capability{CapabilityMultiplexing, CapabilityCustomDomains}, MaxPayloadSize: MaxPayloadSize}
+	legacy := Hello{Version: Version, Capabilities: []Capability{CapabilityMultiplexing}, MaxPayloadSize: MaxPayloadSize}
+	ack, err := Negotiate(offer, legacy)
+	if err != nil || len(ack.Capabilities) != 1 || ack.Capabilities[0] != CapabilityMultiplexing {
+		t.Fatal("legacy negotiation changed", err)
 	}
 }

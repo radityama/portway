@@ -43,6 +43,7 @@ type Reporter struct {
 	Interval           time.Duration
 	Snapshot           func() control.RelayReport
 	OnDrain            func()
+	OnRoutes           func([]control.DomainRoute) error
 	Logger             *slog.Logger
 	lastAck            *control.ReportAcknowledgement
 }
@@ -91,6 +92,11 @@ func (r *Reporter) Run(ctx context.Context) {
 			}
 			r.Logger.Warn("relay_report_unavailable")
 		} else {
+			if r.OnRoutes != nil && r.OnRoutes(ack.Routes) != nil {
+				r.Logger.Warn("relay_domain_snapshot_rejected")
+				r.OnDrain()
+				return
+			}
 			first := prior == nil
 			prior = &ack
 			if first {

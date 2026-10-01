@@ -157,6 +157,18 @@ func exactKeys(raw []byte, shape reflect.Type) bool {
 		}
 		shape = shape.Elem()
 	}
+	if shape.Kind() == reflect.Slice && !reflect.PointerTo(shape).Implements(reflect.TypeFor[json.Unmarshaler]()) {
+		var values []json.RawMessage
+		if json.Unmarshal(raw, &values) != nil {
+			return false
+		}
+		for _, value := range values {
+			if !exactKeys(value, shape.Elem()) {
+				return false
+			}
+		}
+		return true
+	}
 	if shape.Kind() != reflect.Struct || reflect.PointerTo(shape).Implements(reflect.TypeFor[json.Unmarshaler]()) {
 		return true
 	}

@@ -79,8 +79,9 @@ upgraded connections. Compression, generic upgrades, HTTP/2 and trailers remain
 unsupported. See [PHASE_8.md](./PHASE_8.md).
 
 Phases 9–10 add the scoped control API and durable PostgreSQL policy described
-below. Phase 11 adds live relay health, capacity and selection below. The next phase
-is Phase 12: domains and TLS management.
+below. Phase 11 adds live relay health, capacity and selection. Phase 12 adds DNS
+ownership, custom aliases and certificate lifecycle. The next phase is Phase 13:
+dashboard implementation.
 
 ## What this starter contains
 
@@ -97,6 +98,9 @@ is Phase 12: domains and TLS management.
 - validated WebSocket upgrades, incremental SSE/chunked HTTP and streaming idle lifetimes
 - scoped control-plane HTTP API with PostgreSQL persistence and explicit memory mode
 - baseline/additive migrations, safe provisioning and real database integration tests
+- live relay health/capacity, fenced reports, draining and generation-based failover
+- scoped custom domains, DNS TXT proofs and generation-bound relay-local aliases
+- atomic wildcard/custom PEM reload and stable local CA issuance/renewal tooling
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification
 - Codex/Claude Code instructions and master prompt
@@ -155,3 +159,22 @@ reuse the existing local mux and leases. Real two-relay E2E verifies SSE complet
 crash recovery and no replay. Production ingress/DNS must follow the assigned relay;
 cross-node application proxying and ingress-controller installation remain outside
 this phase. See [PHASE_11.md](./PHASE_11.md).
+
+## Phase 12
+
+Custom domains enforce tunnel/project/organization scope and store only hashes of
+one-time DNS TXT challenges. A third additive migration preserves legacy hostname
+reservations and disables associations without ownership proof. Verification
+resolves bounded TXT data outside writer transactions and rechecks current proof,
+authorization and revocation before commit. ACTIVE domains reach the assigned
+relay through complete 15-minute snapshots; local generation and session leases
+govern routing. Optional negotiated alias Host metadata keeps fixed loopback
+forwarding and the registered tunnel binding intact.
+
+Public wildcard/custom certificates load into an atomic cache outside TLS
+callbacks. Private manifests can point to immutable renewed PEM bundles. Failed
+reload preserves the prior valid cache; new handshakes reject expired certificates.
+`portway-cert` provisions and renews local leaves under a stable development CA;
+mkcert and externally issued PEM files are supported. Clients install trust
+explicitly. Operators supply production DNS/ingress and external ACME issuance;
+ACME account automation remains future work. See [PHASE_12.md](./PHASE_12.md).

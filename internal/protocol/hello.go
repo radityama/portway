@@ -23,6 +23,7 @@ const (
 	CapabilityGracefulShutdown Capability = "graceful_shutdown"
 	CapabilityStreaming        Capability = "streaming"
 	CapabilityWebSocket        Capability = "websocket"
+	CapabilityCustomDomains    Capability = "custom_domains"
 )
 
 var (

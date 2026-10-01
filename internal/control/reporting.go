@@ -21,13 +21,20 @@ type RelayReport struct {
 	InstanceID string `json:"instanceId"`
 	Status     string `json:"status"`
 }
+type DomainRoute struct {
+	Hostname   string              `json:"hostname"`
+	TunnelID   string              `json:"tunnelId"`
+	Generation protocol.Generation `json:"generation"`
+	ExpiresAt  time.Time           `json:"expiresAt"`
+}
 type ReportAcknowledgement struct {
-	RelayID        string    `json:"relayId"`
-	InstanceID     string    `json:"instanceId"`
-	LeaseID        string    `json:"leaseId"`
-	Sequence       int       `json:"sequence"`
-	ExpiresAt      time.Time `json:"expiresAt"`
-	DrainRequested bool      `json:"drainRequested"`
+	Routes         []DomainRoute `json:"routes,omitempty"`
+	RelayID        string        `json:"relayId"`
+	InstanceID     string        `json:"instanceId"`
+	LeaseID        string        `json:"leaseId"`
+	Sequence       int           `json:"sequence"`
+	ExpiresAt      time.Time     `json:"expiresAt"`
+	DrainRequested bool          `json:"drainRequested"`
 }
 
 func validIncarnation(value string) bool {
@@ -63,6 +70,16 @@ func (c *Client) ReportRelay(ctx context.Context, relay, bearer string, report R
 	now := time.Now()
 	if ack.RelayID != relay || ack.InstanceID != report.InstanceID || !validIncarnation(ack.LeaseID) || ack.Sequence < 0 || ack.Sequence > 2147483647 || !ack.ExpiresAt.After(now) || ack.ExpiresAt.After(now.Add(18*time.Second)) || prior != nil && (ack.LeaseID != prior.LeaseID || ack.Sequence != expected) {
 		return ReportAcknowledgement{}, InvalidAssignment()
+	}
+	if len(ack.Routes) > 128 {
+		return ReportAcknowledgement{}, InvalidAssignment()
+	}
+	seen := map[string]bool{}
+	for _, r := range ack.Routes {
+		if !protocol.ValidHostname(r.Hostname) || len(r.Hostname) > 220 || !protocol.ValidTunnelID(r.TunnelID) || r.Generation == 0 || !r.ExpiresAt.After(now) || r.ExpiresAt.After(now.Add(15*time.Minute+30*time.Second)) || seen[r.Hostname] {
+			return ReportAcknowledgement{}, InvalidAssignment()
+		}
+		seen[r.Hostname] = true
 	}
 	return ack, nil
 }

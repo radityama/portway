@@ -47,6 +47,20 @@ func pairWithLimit(t *testing.T, limit int, accept func(*Stream, protocol.OpenSt
 func request() protocol.OpenStream {
 	return protocol.OpenStream{Method: "POST", Target: "/", Host: "p-abc.portway.localhost", Headers: [][]string{}, ContentLength: -1}
 }
+
+func TestMuxRejectsUnnegotiatedAliasMetadata(t *testing.T) {
+	origin, _ := pair(t, func(s *Stream, _ protocol.OpenStream) {
+		s.Reject(protocol.StreamInvalid)
+	})
+	open := request()
+	open.PublicHost = "app.example.test"
+	if _, err := origin.Open(context.Background(), open); !errors.Is(err, ErrProtocol) {
+		t.Fatal("unnegotiated alias metadata accepted")
+	}
+	if origin.ActiveStreams() != 0 {
+		t.Fatal("rejected alias retained a stream")
+	}
+}
 func TestMuxStreamsFragmentAndHalfClose(t *testing.T) {
 	origin, _ := pair(t, func(s *Stream, _ protocol.OpenStream) {
 		if err := s.Accept(); err != nil {

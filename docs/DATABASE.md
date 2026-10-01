@@ -217,12 +217,14 @@ model Domain {
   hostname   String       @unique
   status     DomainStatus @default(PENDING_VERIFICATION)
   verifiedAt DateTime?
+  verificationHash String?
+  verificationExpiresAt DateTime?
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
   tunnel     Tunnel?      @relation(fields: [tunnelId], references: [id], onDelete: SetNull)
 
-  @@index([tunnelId])
-  @@index([status])
+  @@index([tunnelId, id])
+  @@index([status, id])
 }
 
 model Relay {
@@ -550,3 +552,20 @@ A relay's reported observations never grant credentials or tenant access. Redis
 loss prevents new control assignments until nodes report again; already admitted
 sessions keep their local lease. Presence is not durable identity or live tunnel
 ownership consensus. API memory mode uses bounded process-local presence only.
+
+## 16. Phase 12 domain ownership
+
+Domain stays scoped through its non-null tunnel association for new records.
+Add nullable `verificationHash` (lowercase SHA-256 hex of the full DNS TXT proof)
+and `verificationExpiresAt` (24h challenge deadline). These fields bind persisted
+ownership verification across API restarts without storing raw challenges.
+Legacy records with neither field cannot acquire routing authority; existing
+legacy domain rows become DISABLED during migration. Both fields are present or
+absent together; VERIFIED/ACTIVE require verifiedAt and a proof hash. New hostname
+values are canonical ASCII DNS names, unique across enabled/disabled reservations.
+A `(tunnelId,id)` index serves scoped keyset listing, replacing the tunnel-only
+index; `(status,id)` serves bounded enabled-domain snapshots. Domain mutation,
+challenge rotation and operator metadata audit use existing writer transactions.
+DNS lookup happens outside transactions and commits only after a current hash,
+expiry, state and authorization recheck. Private certificates/CA keys remain in
+operator-managed private files, never in application tables or API responses.

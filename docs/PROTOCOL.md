@@ -125,7 +125,7 @@ contains the selected version, shared capabilities, and smaller payload limit:
 - Capability names match `[a-z][a-z0-9_]{0,63}`. Lists contain at most 32 unique
   entries. Duplicate entries are invalid.
 - Defined names are `multiplexing`, `flow_control`, `heartbeat`,
-  `graceful_shutdown`, `streaming`, and `websocket`. Advertising a capability promises its behavior; defining
+  `graceful_shutdown`, `streaming`, `websocket`, and `custom_domains`. Advertising a capability promises its behavior; defining
   these names in Phase 1 does not enable their later-phase implementations.
 - `version`, `capabilities`, and `max_payload_size` are required. An empty
   capabilities array is valid. `required_capabilities` may be absent in `HELLO`.
@@ -471,3 +471,16 @@ SSE response headers and body chunks flush immediately. Ordinary streaming
 HTTP retains 16 MiB request and 64 MiB response limits; trailers remain unsupported.
 Chunked transfer coding is parsed/reconstructed at HTTP boundaries, not forwarded
 as application body bytes. Failed upgrades and streaming requests are not replayed.
+
+## Custom domain Host metadata (Phase 12)
+
+Optional capability `custom_domains` enables `public_host` on OPEN_STREAM. Its
+value is a canonical lowercase DNS hostname (no port, URL, IP or trailing dot),
+omitted on generated-host requests. `host` still equals the registered generated
+hostname, binding every stream to that session. A verified relay may supply an
+API-authorized public alias as `public_host`; the agent uses it as the local HTTP
+Host while dialing only its explicitly fixed numeric loopback destination.
+Metadata accounting includes both hosts. Null, empty, duplicate, unknown/case
+alias fields and invalid authorities fail strict decoding. Unnegotiated public_host
+is rejected; legacy agents continue generated-host HTTP and aliases return 501
+without sending a new field. There is no new frame type or protocol downgrade.

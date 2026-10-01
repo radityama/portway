@@ -58,7 +58,7 @@ test(
             (
               await client.$queryRaw`SELECT count(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL`
             )[0].count,
-            2,
+            3,
           );
           const seed = loadSeed(fixture.env.API_SEED_FILE);
           await provision(client, seed);
@@ -674,6 +674,7 @@ test(
       INSERT INTO "Organization" (id,name,slug,"updatedAt") VALUES ('org_legacy','Legacy','legacy',now());
       INSERT INTO "Project" (id,"organizationId",name,slug,"updatedAt") VALUES ('prj_legacy','org_legacy','Legacy','legacy',now());
       INSERT INTO "Tunnel" (id,"projectId",name,slug,generation,"updatedAt") VALUES ('tnl_legacy','prj_legacy','Legacy','legacy',9223372036854775807,now());
+      INSERT INTO "Domain" (id,"tunnelId",hostname,status,"verifiedAt","updatedAt") VALUES ('dom_legacy','tnl_legacy','legacy.example.test','VERIFIED',now(),now());
       INSERT INTO "TunnelCredential" (id,"tunnelId","tokenHash",scope) VALUES ('cred_legacy','tnl_legacy','${'a'.repeat(64)}','connect');
       INSERT INTO "AuditLog" (id,"organizationId",action,"resourceType","resourceId") VALUES ('aud_legacy','org_legacy','tunnel.create','tunnel','tnl_legacy');`;
         await execute(
@@ -765,6 +766,15 @@ test(
       assert.equal(tunnel.generation.toFixed(0), '9223372036854775807');
       assert.equal(tunnel.localPort, null);
       assert.equal(tunnel.publicHostname, null);
+      const domain = await client.domain.findUnique({
+        where: { id: 'dom_legacy' },
+      });
+      assert.equal(domain.hostname, 'legacy.example.test');
+      assert.equal(domain.tunnelId, 'tnl_legacy');
+      assert.equal(domain.status, 'DISABLED');
+      assert.equal(domain.verifiedAt, null);
+      assert.equal(domain.verificationHash, null);
+      assert.equal(domain.verificationExpiresAt, null);
       const credential = await client.tunnelCredential.findUnique({
         where: { id: 'cred_legacy' },
       });

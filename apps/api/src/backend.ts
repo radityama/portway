@@ -1,4 +1,5 @@
 import type {
+  Domain,
   Assignment,
   Organization,
   Principal,
@@ -62,6 +63,30 @@ export interface ControlBackend {
     cursor: string | undefined,
     limit: number,
   ): Awaitable<Page<Relay>>;
+  domain(p: Principal, id: string): Awaitable<Domain>;
+  listDomains(
+    p: Principal,
+    tunnelId: string | null,
+    cursor: string | undefined,
+    limit: number,
+  ): Awaitable<Page<Domain>>;
+  createDomain(
+    p: Principal,
+    body: Record<string, unknown>,
+  ): Awaitable<{
+    domain: Domain;
+    verification: { type: 'TXT'; name: string; value: string };
+  }>;
+  challengeDomain(
+    p: Principal,
+    id: string,
+  ): Awaitable<{
+    domain: Domain;
+    verification: { type: 'TXT'; name: string; value: string };
+  }>;
+  verifyDomain(p: Principal, id: string): Awaitable<{ domain: Domain }>;
+  activateDomain(p: Principal, id: string): Awaitable<{ domain: Domain }>;
+  disableDomain(p: Principal, id: string): Awaitable<void>;
   createProject(
     p: Principal,
     body: Record<string, unknown>,

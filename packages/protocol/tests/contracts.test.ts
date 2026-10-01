@@ -222,3 +222,21 @@ test('documented frame values match TypeScript without filling unassigned IDs', 
   );
   assert.deepEqual(types, FRAME_TYPES);
 });
+
+test('custom alias metadata shares registered binding and byte-level Go fixture', () => {
+  const frame = fixtures.custom_domains.open,
+    wire = Buffer.from(frame.wire_hex, 'hex');
+  const open: OpenStream = JSON.parse(
+    Buffer.from(frame.payload_hex, 'hex').toString(),
+  );
+  assert.equal(CAPABILITIES.CUSTOM_DOMAINS, 'custom_domains');
+  assert.equal(open.host, 'p-bound.portway.localhost');
+  assert.equal(open.public_host, 'app.example.test');
+  assert.equal(wire[1], FRAME_TYPES.OPEN_STREAM);
+  assert.equal(wire.readBigUInt64BE(4), 1n);
+  assert.equal(wire.readUInt32BE(12), wire.length - FRAME_HEADER_SIZE);
+  assert.deepEqual(
+    wire.subarray(FRAME_HEADER_SIZE),
+    Buffer.from(frame.payload_hex, 'hex'),
+  );
+});

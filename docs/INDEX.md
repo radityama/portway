@@ -28,6 +28,7 @@
 - [Phase 9](./PHASE_9.md) — scoped control API, short-lived relay credentials and CLI bootstrap
 - [Phase 10](./PHASE_10.md) — PostgreSQL durability, migrations, safe provisioning and transaction tests
 - [Phase 11](./PHASE_11.md) — live relay reports, capacity selection, operator draining and agent failover
+- [Phase 12](./PHASE_12.md) — DNS ownership proofs, generation-bound custom aliases and certificate renewal
 
 ## Contract hierarchy
 

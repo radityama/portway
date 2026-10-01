@@ -13,6 +13,7 @@ let database: Database | undefined;
 let presence: RedisPresence | undefined;
 try {
   const options = {
+    dnsServer: env.dnsServer,
     baseDomain: env.publicBaseDomain,
     credentialTTL: env.credentialTTL,
   };

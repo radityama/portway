@@ -63,11 +63,11 @@ func (s *Session) serveHTTP(address string, shutdown context.Context, ready, dra
 }
 
 func (s *Session) streamOptions(diagnostic bool) mux.Options {
-	return mux.Options{MaxStreams: s.maxStreams, MaxFrame: s.MaxPayloadSize, StreamTimeout: s.streamTimeout, WriteTimeout: s.writeTimeout, IdleTimeout: s.idleTimeout, ExpiresAt: s.ExpiresAt, Heartbeat: s.heartbeat, Diagnostic: diagnostic, GracefulShutdown: s.graceful, ShutdownTimeout: s.shutdownTimeout, Streaming: !diagnostic && s.streaming, WebSocket: !diagnostic && s.websocket}
+	return mux.Options{MaxStreams: s.maxStreams, MaxFrame: s.MaxPayloadSize, StreamTimeout: s.streamTimeout, WriteTimeout: s.writeTimeout, IdleTimeout: s.idleTimeout, ExpiresAt: s.ExpiresAt, Heartbeat: s.heartbeat, Diagnostic: diagnostic, GracefulShutdown: s.graceful, ShutdownTimeout: s.shutdownTimeout, Streaming: !diagnostic && s.streaming, WebSocket: !diagnostic && s.websocket, CustomDomains: !diagnostic && s.customDomains}
 }
 
 func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, address string) {
-	if open.Host != s.registeredHost || open.Upgrade != "" && !s.websocket {
+	if open.Host != s.registeredHost || (open.PublicHost != "" && !s.customDomains) || open.Upgrade != "" && !s.websocket {
 		stream.Reject(protocol.StreamInvalid)
 		return
 	}
@@ -99,7 +99,11 @@ func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, addr
 	// This socket still serves exactly one request and is closed by owned
 	// cleanup. Do not request an immediate upstream close: an early response
 	// with unread upload bytes can otherwise be lost to a TCP reset.
-	request := &http.Request{Method: open.Method, URL: target, Host: open.Host, Header: make(http.Header), ContentLength: open.ContentLength}
+	upstreamHost := open.Host
+	if open.PublicHost != "" {
+		upstreamHost = open.PublicHost
+	}
+	request := &http.Request{Method: open.Method, URL: target, Host: upstreamHost, Header: make(http.Header), ContentLength: open.ContentLength}
 	for _, pair := range open.Headers {
 		request.Header.Add(pair[0], pair[1])
 	}

@@ -141,12 +141,14 @@ model Domain {
   hostname   String       @unique
   status     DomainStatus @default(PENDING_VERIFICATION)
   verifiedAt DateTime?
+  verificationHash String?
+  verificationExpiresAt DateTime?
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
   tunnel     Tunnel?      @relation(fields: [tunnelId], references: [id], onDelete: SetNull)
 
-  @@index([tunnelId])
-  @@index([status])
+  @@index([tunnelId, id])
+  @@index([status, id])
 }
 
 model Relay {

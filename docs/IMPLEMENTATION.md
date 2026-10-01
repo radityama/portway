@@ -385,6 +385,18 @@ Implement:
 
 For local development, support a local certificate workflow using a trusted development CA such as mkcert.
 
+Phase 12 implements scoped, hash-only DNS TXT ownership challenges, additive
+domain migration and relay-local current-generation aliases delivered through
+authenticated report snapshots. Optional `custom_domains` stream metadata
+preserves the application Host while retaining the registered tunnel binding.
+Wildcard/custom PEM certificates reload atomically outside TLS callbacks; failed
+renewals preserve the last valid cache and expired certificates reject new
+handshakes. Local CA tooling issues and renews immutable bundles under a stable
+root, with explicit mkcert/external-issuer deployment instructions. Real DNS,
+PostgreSQL and HTTPS tests cover ownership races, outages, rotation, policy
+removal and renewal without changing trust. External ACME automation and ingress
+installation remain operator/future work. See [PHASE_12.md](./PHASE_12.md).
+
 ## 17. Phase 13 — Dashboard
 
 Implement pages in this order:

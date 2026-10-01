@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/radityama/portway/internal/auth"
+	"github.com/radityama/portway/internal/certificates"
 	"github.com/radityama/portway/internal/config"
 	"github.com/radityama/portway/internal/control"
 	"github.com/radityama/portway/internal/relay"
@@ -81,7 +82,8 @@ func main() {
 		logger.Error("relay_listen_failed")
 		os.Exit(1)
 	}
-	publicConfig, err := transport.ServerConfig(cfg.PublicCertFile, cfg.PublicKeyFile)
+	certificatesManager := &certificates.Manager{CertFile: cfg.PublicCertFile, KeyFile: cfg.PublicKeyFile, ManifestFile: cfg.PublicManifest, BaseDomain: cfg.PublicBaseDomain, Allowed: server.DomainAllowed}
+	publicConfig, err := certificatesManager.Config()
 	if err != nil {
 		listener.Close()
 		logger.Error("public_tls_configuration_failed")
@@ -97,6 +99,8 @@ func main() {
 	logger.Info("public_https_listening", "address", cfg.PublicAddress)
 	life, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	certificateDone := make(chan struct{})
+	go func() { defer close(certificateDone); certificatesManager.Run(life, cfg.TLSReloadInterval, logger) }()
 	done := make(chan error, 2)
 	go func() { done <- server.Serve(life, listener) }()
 	go func() { done <- server.ServeHTTPS(life, publicListener, publicConfig) }()
@@ -104,7 +108,7 @@ func main() {
 	reportLife, stopReport := context.WithCancel(life)
 	reportDone := make(chan struct{})
 	if reportAPI != nil {
-		reporter = &relay.Reporter{Client: reportAPI, RelayID: cfg.ReportID, TokenFile: cfg.ReportTokenFile, Interval: cfg.ReportInterval, Snapshot: server.Snapshot, OnDrain: stop, Logger: logger}
+		reporter = &relay.Reporter{Client: reportAPI, RelayID: cfg.ReportID, TokenFile: cfg.ReportTokenFile, Interval: cfg.ReportInterval, Snapshot: server.Snapshot, OnDrain: stop, OnRoutes: server.SetDomainRoutes, Logger: logger}
 		go func() { defer close(reportDone); reporter.Run(reportLife) }()
 	} else {
 		close(reportDone)
@@ -135,6 +139,7 @@ func main() {
 	}
 	stopReport()
 	<-reportDone
+	<-certificateDone
 	if first != nil || second != nil {
 		logger.Error("relay_serve_failed")
 		os.Exit(1)

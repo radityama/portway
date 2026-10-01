@@ -232,9 +232,10 @@ List domains available to the caller.
 
 ### DELETE /domains/:id
 
-Remove the domain association.
+Disable the association while preserving its hostname reservation and history.
 
-Verification may require a DNS TXT record, depending on domain-management design.
+Ownership requires the one-time DNS TXT challenge. Read, challenge, verify and
+activate endpoints and their full lifecycle are defined in section 19.
 
 ## 9. Relays
 
@@ -440,8 +441,9 @@ Phase 9 implements the auth, projects, tunnels and read-only relays endpoints
 above. The API uses a bounded process-local store loaded from optional private
 API_SEED_FILE JSON. State is lost at API restart; this is the pre-database boundary,
 not durable persistence. PostgreSQL/migrations are Phase 10; dynamic relay
-registration, health, capacity and failover are Phase 11. Domains/logs/metrics
-remain later endpoints and return the normal NOT_IMPLEMENTED envelope.
+registration, health, capacity and failover are Phase 11. Phase 12 implements
+domains as specified in section 19. Logs/metrics remain later endpoints and return
+the normal NOT_IMPLEMENTED envelope.
 
 Authentication uses deployment-provisioned API keys (hashes only in the seed),
 with userId, organizationId, expiresAt and revokedAt. An active matching membership
@@ -644,3 +646,81 @@ URL after recovery. Production requires operator ingress/DNS to route that hostn
 to its assigned relay (e.g. a controller watching assignment metadata); this phase
 does not install an ingress load balancer or proxy application bytes across relays.
 Sending traffic indiscriminately to every node cannot resolve a remote local mux.
+
+## 19. Phase 12 domains and TLS
+
+Custom domains are scoped through their tunnel/project/organization. Reads require
+membership; OWNER/ADMIN/MEMBER may mutate, VIEWER receives 403. Cross-organization
+IDs return DOMAIN_NOT_FOUND. Hostnames are canonical lowercase ASCII DNS names
+with at least two labels, at most 220 characters; uppercase input is normalized.
+Reject IPs, ports, URLs, wildcard input, trailing dots, underscores, numeric TLDs,
+and PUBLIC_BASE_DOMAIN or its children. Global hostname reservations are unique,
+including DISABLED records. Domain association never selects a local destination.
+The initial deployment admits at most 128 domain records (and existing lower
+resource limits), retaining disabled records for audit and safe reservation.
+
+- GET /domains: cursor/limit and optional tunnelId; scoped keyset pagination.
+- GET /domains/:id: scoped metadata; verification hashes are never exposed.
+- POST /domains: flat {hostname,tunnelId}. Reject revoked tunnels. Returns 201 with
+  {domain,verification:{type:"TXT",name:"_portway-challenge.<hostname>",value}}.
+  The value is `portway-verification=` plus a random 32-byte base64url token,
+  returned once; only SHA-256 of that complete value is stored. Save the value
+  and publish it as DNS TXT. Challenges expire after 24h.
+- POST /domains/:id/challenge: empty optional object; rotates a one-time challenge,
+  clears verification and returns the domain to PENDING_VERIFICATION. This also
+  removes any active alias, and can recover a lost/expired challenge.
+- POST /domains/:id/verify: empty optional object; resolves the exact TXT name via
+  the operator's DNS resolver, with at most 16 simultaneous lookups, a 2s deadline,
+  and bounded records/bytes. No URL/HTTP callback or caller-selected resolver.
+  Exact hashed proof transitions PENDING_VERIFICATION to VERIFIED; already
+  VERIFIED/ACTIVE is an idempotent read. Mismatch/expired challenge returns
+  409 DOMAIN_VERIFICATION_REQUIRED; resolver failure returns 503 DNS_UNAVAILABLE.
+  DNS runs outside database transactions; commit rechecks auth, current challenge,
+  tunnel revocation and expiry, rejecting rotated/disabled proof races.
+- POST /domains/:id/activate: empty optional object; VERIFIED or already ACTIVE
+  becomes ACTIVE. PENDING_VERIFICATION/DISABLED returns verification-required.
+  ACTIVE means operator-enabled routing policy, not globally confirmed certificate
+  deployment. Relay needs a matching valid locally provisioned certificate.
+- DELETE /domains/:id: empty optional object; sets DISABLED and clears proof.
+  Association/history/hostname reservation remain; rotate a challenge to re-enable.
+
+Create/challenge are one-time proof responses; keyed retries use the existing
+CREDENTIAL_ALREADY_ISSUED error without storing raw proof. Activate/delete use
+metadata idempotency with scope rechecked on replay. Verify is logically idempotent
+and does not hold a writer transaction during DNS. Mutations and audits commit
+atomically. Unknown/duplicate fields and queries use existing validation limits.
+API_DNS_SERVER optionally selects an operator-provisioned numeric resolver address
+(with optional port); configuration is validated before listening.
+
+Relay register/report acknowledgements additionally include `routes`, a complete
+snapshot of at most 128 {hostname,tunnelId,generation,expiresAt} bindings. They
+include only proof-backed ACTIVE domains for non-revoked tunnels currently assigned
+to the authenticated node with a positive generation. Snapshot lease is 15m;
+local session expiry can shorten its use. A newer report replaces the entire map,
+so disable/revoke/reassignment removes aliases on the next report. An API outage
+retains existing aliases until their snapshot/session expiry; it cannot create or
+extend them. A TLS certificate alone never authorizes an alias. The public Host/SNI
+must agree and route generation must match the live local owner before any stream.
+The generated hostname and wire registration binding remain stable. Optional
+`custom_domains` negotiates `public_host` OPEN_STREAM metadata for local alias Host
+preservation; legacy agents return 501 for aliases and retain generated-host HTTP.
+
+PUBLIC_TLS_MANIFEST_FILE optionally supplies a private local JSON certificate
+manifest with optional `default: {hostname,certFile,keyFile}` and
+`domains: [{hostname,certFile,keyFile}]`. A default entry atomically redirects the
+wildcard pair to an immutable renewed bundle. It contains no API-provided
+paths. The existing PUBLIC_TLS_CERT_FILE/KEY_FILE supply the default wildcard pair.
+A bounded joined worker reloads pairs every PUBLIC_TLS_RELOAD_INTERVAL (30s default,
+100ms..5m). Key/manifest files must be private regular files, not symlinks; PEM and
+manifest sizes are bounded. Validate key match, certificate validity/server usage
+and coverage before atomic in-memory publication. Failed reload keeps prior valid
+certificates; expired certificates cannot serve new handshakes. API/DB/Redis/DNS
+and certificate file reads never occur in the public request/TLS callback.
+
+Local certificate tooling creates an explicitly selected private CA directory,
+issues stable-root wildcard/custom PEM bundles and renews near expiry without
+rotating its CA or agent credentials. It does not install OS trust. mkcert can
+supply trusted local PEM files; production may use an external ACME issuer and
+atomically replace versioned pairs/manifest. ACME account/challenge automation is
+post-MVP work. Operators must route wildcard/custom DNS to the assigned relay and
+keep ingress consistent with Phase 11; there is no cross-relay byte proxy.

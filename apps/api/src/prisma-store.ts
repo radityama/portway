@@ -1,4 +1,14 @@
 import {
+  DOMAIN_LIMIT,
+  ROUTE_TTL,
+  assertChallenge,
+  challenge,
+  domainDto,
+  domainName,
+  proofHash,
+  verificationRequired,
+} from './domains.ts';
+import {
   choose,
   effective,
   parseReport,
@@ -9,6 +19,7 @@ import {
 } from './presence.ts';
 import { Prisma } from '@prisma/client';
 import type {
+  Domain as DbDomain,
   ApiKey as DbKey,
   ApiSession as DbSession,
   Project as DbProject,
@@ -22,6 +33,7 @@ import type {
   TunnelFilters,
 } from './backend.ts';
 import type {
+  DomainRecord,
   Assignment,
   Principal,
   Role,
@@ -68,6 +80,15 @@ const relayDto = (r: DbRelay): Relay => ({
   status: r.status,
   lastSeenAt: r.lastSeenAt?.toISOString() ?? null,
 });
+function domainRecord(d: DbDomain): DomainRecord {
+  return {
+    ...d,
+    verifiedAt: d.verifiedAt?.toISOString() ?? null,
+    verificationExpiresAt: d.verificationExpiresAt?.toISOString() ?? null,
+    createdAt: d.createdAt.toISOString(),
+    updatedAt: d.updatedAt.toISOString(),
+  };
+}
 function keyPolicy(key: DbKey | null, now: number) {
   if (!key) throw new ApiFailure(401, 'AUTH_INVALID', 'Authentication failed');
   if (key.revokedAt)
@@ -258,7 +279,30 @@ export class PrismaStore implements ControlBackend {
             sequence(body.sequence),
           )
         : await this.presence.register(relayId, report);
-      return acknowledgement(value, relay.status === 'DRAINING');
+      const routes = await tx.domain.findMany({
+        where: {
+          status: 'ACTIVE',
+          verifiedAt: { not: null },
+          verificationHash: { not: null },
+          tunnel: {
+            relayId,
+            status: { not: 'REVOKED' },
+            generation: { gt: 0 },
+          },
+        },
+        include: { tunnel: true },
+        orderBy: { id: 'asc' },
+        take: DOMAIN_LIMIT,
+      });
+      return {
+        ...acknowledgement(value, relay.status === 'DRAINING'),
+        routes: routes.map((d) => ({
+          hostname: d.hostname,
+          tunnelId: d.tunnelId!,
+          generation: d.tunnel!.generation.toFixed(0),
+          expiresAt: new Date(this.now() + ROUTE_TTL).toISOString(),
+        })),
+      };
     });
   }
   relayPolicy(bearer: string, relayId: string, drain: boolean) {
@@ -534,6 +578,187 @@ export class PrismaStore implements ControlBackend {
             ? this.cursors.write(p, 'relays', items.at(-1)!.id, '')
             : null,
       };
+    });
+  }
+  private async scopedDomain(tx: Transaction, p: Principal, domainId: string) {
+    const d = await tx.domain.findFirst({
+      where: {
+        id: domainId,
+        tunnel: { project: { organizationId: p.organizationId } },
+      },
+    });
+    if (!d) throw new ApiFailure(404, 'DOMAIN_NOT_FOUND', 'Domain not found');
+    return d;
+  }
+  domain(p: Principal, domainId: string) {
+    return this.database.work(false, async (tx) => {
+      await this.check(tx, p);
+      return domainDto(domainRecord(await this.scopedDomain(tx, p, domainId)));
+    });
+  }
+  listDomains(
+    p: Principal,
+    tunnelId: string | null,
+    cursor: string | undefined,
+    limit: number,
+  ) {
+    return this.database.work(false, async (tx) => {
+      await this.check(tx, p);
+      if (tunnelId) await this.scopedTunnel(tx, p, tunnelId);
+      const after = this.cursors.read(p, 'domains', cursor, tunnelId ?? '');
+      if (after) await this.scopedDomain(tx, p, after);
+      const rows = await tx.domain.findMany({
+        where: {
+          tunnel: { project: { organizationId: p.organizationId } },
+          ...(tunnelId ? { tunnelId } : {}),
+          ...(after ? { id: { gt: after } } : {}),
+        },
+        orderBy: { id: 'asc' },
+        take: limit + 1,
+      });
+      const items = rows.slice(0, limit).map((d) => domainDto(domainRecord(d)));
+      return {
+        items,
+        nextCursor:
+          rows.length > limit
+            ? this.cursors.write(p, 'domains', items.at(-1)!.id, tunnelId ?? '')
+            : null,
+      };
+    });
+  }
+  createDomain(p: Principal, body: Record<string, unknown>) {
+    return this.database.work(true, async (tx) => {
+      await this.check(tx, p, true);
+      fields(body, ['hostname', 'tunnelId']);
+      const t = await this.scopedTunnel(tx, p, id(body.tunnelId));
+      if (t.status === 'REVOKED')
+        throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+      const host = domainName(body.hostname, this.guard.baseDomain);
+      if (await tx.domain.findUnique({ where: { hostname: host } }))
+        throw new ApiFailure(
+          409,
+          'DOMAIN_ALREADY_ASSIGNED',
+          'Domain already assigned',
+        );
+      this.guard.capacity(
+        await tx.domain.count(),
+        Math.min(DOMAIN_LIMIT, this.guard.limits.resources),
+      );
+      const proof = challenge(host, this.now());
+      const d = await tx.domain.create({
+        data: {
+          id: opaque('dom'),
+          tunnelId: t.id,
+          hostname: host,
+          verificationHash: proof.verificationHash,
+          verificationExpiresAt: new Date(proof.verificationExpiresAt),
+        },
+      });
+      await this.audit(tx, p, 'domain.create', 'domain', d.id);
+      return {
+        domain: domainDto(domainRecord(d)),
+        verification: proof.verification,
+      };
+    });
+  }
+  challengeDomain(p: Principal, domainId: string) {
+    return this.database.work(true, async (tx) => {
+      await this.check(tx, p, true);
+      const old = await this.scopedDomain(tx, p, domainId),
+        t = await this.scopedTunnel(tx, p, old.tunnelId!);
+      if (t.status === 'REVOKED')
+        throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+      const proof = challenge(old.hostname, this.now());
+      const d = await tx.domain.update({
+        where: { id: domainId },
+        data: {
+          status: 'PENDING_VERIFICATION',
+          verifiedAt: null,
+          verificationHash: proof.verificationHash,
+          verificationExpiresAt: new Date(proof.verificationExpiresAt),
+        },
+      });
+      await this.audit(tx, p, 'domain.challenge', 'domain', domainId);
+      return {
+        domain: domainDto(domainRecord(d)),
+        verification: proof.verification,
+      };
+    });
+  }
+  async verifyDomain(p: Principal, domainId: string) {
+    const old = await this.database.work(false, async (tx) => {
+      await this.check(tx, p, true);
+      const d = await this.scopedDomain(tx, p, domainId),
+        t = await this.scopedTunnel(tx, p, d.tunnelId!);
+      if (t.status === 'REVOKED')
+        throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+      return d;
+    });
+    if (old.status === 'VERIFIED' || old.status === 'ACTIVE')
+      return { domain: domainDto(domainRecord(old)) };
+    assertChallenge(domainRecord(old), this.now());
+    const records = await this.guard.dns.lookup(
+      '_portway-challenge.' + old.hostname,
+    );
+    if (!records.some((v) => proofHash(v) === old.verificationHash))
+      verificationRequired();
+    return this.database.work(true, async (tx) => {
+      await this.check(tx, p, true);
+      const current = await this.scopedDomain(tx, p, domainId),
+        t = await this.scopedTunnel(tx, p, current.tunnelId!);
+      if (t.status === 'REVOKED')
+        throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+      if (current.verificationHash !== old.verificationHash)
+        verificationRequired();
+      if (current.status === 'VERIFIED' || current.status === 'ACTIVE')
+        return { domain: domainDto(domainRecord(current)) };
+      assertChallenge(domainRecord(current), this.now());
+      const d = await tx.domain.update({
+        where: { id: domainId },
+        data: { status: 'VERIFIED', verifiedAt: new Date(this.now()) },
+      });
+      await this.audit(tx, p, 'domain.verify', 'domain', domainId);
+      return { domain: domainDto(domainRecord(d)) };
+    });
+  }
+  activateDomain(p: Principal, domainId: string) {
+    return this.database.work(true, async (tx) => {
+      await this.check(tx, p, true);
+      const old = await this.scopedDomain(tx, p, domainId),
+        t = await this.scopedTunnel(tx, p, old.tunnelId!);
+      if (t.status === 'REVOKED')
+        throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
+      if (
+        !['VERIFIED', 'ACTIVE'].includes(old.status) ||
+        !old.verificationHash ||
+        !old.verifiedAt
+      )
+        verificationRequired();
+      if (old.status === 'ACTIVE')
+        return { domain: domainDto(domainRecord(old)) };
+      const d = await tx.domain.update({
+        where: { id: domainId },
+        data: { status: 'ACTIVE' },
+      });
+      await this.audit(tx, p, 'domain.activate', 'domain', domainId);
+      return { domain: domainDto(domainRecord(d)) };
+    });
+  }
+  disableDomain(p: Principal, domainId: string) {
+    return this.database.work(true, async (tx) => {
+      await this.check(tx, p, true);
+      const old = await this.scopedDomain(tx, p, domainId);
+      if (old.status === 'DISABLED') return;
+      await tx.domain.update({
+        where: { id: domainId },
+        data: {
+          status: 'DISABLED',
+          verifiedAt: null,
+          verificationHash: null,
+          verificationExpiresAt: null,
+        },
+      });
+      await this.audit(tx, p, 'domain.disable', 'domain', domainId);
     });
   }
   createProject(p: Principal, body: Record<string, unknown>) {
@@ -875,7 +1100,9 @@ export class PrismaStore implements ControlBackend {
           const tunnel = await this.scopedTunnel(tx, p, prior.resourceId);
           if (path.endsWith('/connect') && tunnel.status === 'REVOKED')
             throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
-        } else if (
+        } else if (prior.resourceId && prior.resourceType === 'domain')
+          await this.scopedDomain(tx, p, prior.resourceId);
+        else if (
           prior.resourceId &&
           prior.resourceType === 'project' &&
           method !== 'DELETE'
@@ -897,11 +1124,15 @@ export class PrismaStore implements ControlBackend {
       const result = await operation();
       if (identifier) {
         const resultData = result.data as {
+          domain?: { id: string };
           project?: { id: string };
           tunnel?: { id: string };
         } | null;
         resource =
-          resource ?? resultData?.project?.id ?? resultData?.tunnel?.id;
+          resource ??
+          resultData?.domain?.id ??
+          resultData?.project?.id ??
+          resultData?.tunnel?.id;
         const parent = await tx.apiKey.findUniqueOrThrow({
             where: { tokenHash: p.keyHash },
           }),
@@ -924,9 +1155,11 @@ export class PrismaStore implements ControlBackend {
             secret: secretResult,
             resourceId: resource ?? null,
             resourceType: resource
-              ? path.includes('/projects')
-                ? 'project'
-                : 'tunnel'
+              ? path.includes('/domains')
+                ? 'domain'
+                : path.includes('/projects')
+                  ? 'project'
+                  : 'tunnel'
               : null,
             expiresAt: new Date(this.now() + 600_000),
           },

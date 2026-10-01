@@ -63,6 +63,7 @@ type Session struct {
 	heartbeat           bool
 	streaming           bool
 	websocket           bool
+	customDomains       bool
 	graceful            bool
 	shutdownTimeout     time.Duration
 	httpRegistered      bool
@@ -111,7 +112,7 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		}
 		return frame.EncodeWithLimit(conn, limit)
 	}
-	offer := protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat, protocol.CapabilityGracefulShutdown, protocol.CapabilityStreaming, protocol.CapabilityWebSocket}, MaxPayloadSize: c.MaxFrame}
+	offer := protocol.Hello{Version: protocol.Version, Capabilities: []protocol.Capability{protocol.CapabilityMultiplexing, protocol.CapabilityFlowControl, protocol.CapabilityHeartbeat, protocol.CapabilityGracefulShutdown, protocol.CapabilityStreaming, protocol.CapabilityWebSocket, protocol.CapabilityCustomDomains}, MaxPayloadSize: c.MaxFrame}
 	frame, err := protocol.EncodeHello(offer)
 	if err != nil {
 		return nil, err
@@ -166,7 +167,7 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		return nil, err
 	}
 	keep = true
-	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), flowControl: slices.Contains(ack.Capabilities, protocol.CapabilityFlowControl), heartbeat: slices.Contains(ack.Capabilities, protocol.CapabilityHeartbeat), graceful: slices.Contains(ack.Capabilities, protocol.CapabilityGracefulShutdown), streaming: slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), websocket: slices.Contains(ack.Capabilities, protocol.CapabilityWebSocket) && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), shutdownTimeout: c.ShutdownTimeout, maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
+	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), flowControl: slices.Contains(ack.Capabilities, protocol.CapabilityFlowControl), heartbeat: slices.Contains(ack.Capabilities, protocol.CapabilityHeartbeat), graceful: slices.Contains(ack.Capabilities, protocol.CapabilityGracefulShutdown), streaming: slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), websocket: slices.Contains(ack.Capabilities, protocol.CapabilityWebSocket) && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), customDomains: slices.Contains(ack.Capabilities, protocol.CapabilityCustomDomains), shutdownTimeout: c.ShutdownTimeout, maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
 }
 
 // Wait owns the session reader until closure. Closing the session or cancelling

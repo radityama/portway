@@ -66,7 +66,7 @@ func (i *ingress) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Cancellation aborts connections and waits for our request handlers to finish.
 func (s *Server) ServeHTTPS(ctx context.Context, listener net.Listener, config *tls.Config) error {
 	defer listener.Close()
-	if config == nil || len(config.Certificates) == 0 || config.MinVersion < tls.VersionTLS13 || s.PublicPort < 1 || s.PublicPort > 65535 || s.MaxPublicConnections < 1 || s.MaxPublicConnections > 10000 || s.StreamTimeout <= 0 {
+	if config == nil || (len(config.Certificates) == 0 && config.GetCertificate == nil) || config.MinVersion < tls.VersionTLS13 || s.PublicPort < 1 || s.PublicPort > 65535 || s.MaxPublicConnections < 1 || s.MaxPublicConnections > 10000 || s.StreamTimeout <= 0 {
 		return ErrConfig
 	}
 	handler := &ingress{server: s}
@@ -202,7 +202,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.RLock()
-	id, known := s.hostnames[host]
+	id, known := s.resolveLocked(host)
 	owner := s.sessions[id]
 	var session *mux.Conn
 	var registrationDone <-chan struct{}
@@ -222,6 +222,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-registrationDone:
 			s.mu.RLock()
+			id, known = s.resolveLocked(host)
 			owner = s.sessions[id]
 			if owner != nil && owner.conn != nil && owner.ctx.Err() == nil && time.Now().Before(owner.ExpiresAt) {
 				session = owner.streams
@@ -267,7 +268,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pairs = append(pairs, []string{key, value})
 		}
 	}
-	open := protocol.OpenStream{Method: r.Method, Target: r.URL.RequestURI(), Host: host, Headers: pairs, ContentLength: r.ContentLength}
+	if host != owner.PublicHostname && !session.CustomDomains() {
+		httpFailure(w, "custom domain capability unavailable", 501)
+		return
+	}
+	open := protocol.OpenStream{Method: r.Method, Target: r.URL.RequestURI(), Host: owner.PublicHostname, Headers: pairs, ContentLength: r.ContentLength}
+	if host != owner.PublicHostname {
+		open.PublicHost = host
+	}
 	if upgrade {
 		open.Upgrade = "websocket"
 	}

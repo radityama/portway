@@ -631,3 +631,20 @@ only durable session model. There is no new schema or relay hot-path dependency.
 Overview and relay health use real metadata; logs/metrics remain unavailable when
 the control API reports 501. The agent remains the owner of the fixed local service
 and all public application bytes continue through the relay's local mux.
+
+## Phase 14 observability boundary
+
+Relay and agent counters are local bounded memory. Prometheus scraping and
+periodic presence reporting are separate from application forwarding. Instrumentation
+preserves HTTP full duplex, flushing, hijacking, cancellation and stream cleanup.
+Request observations omit request targets, headers, IPs and bodies entirely.
+Structured process logs use stable events and normalized fields, never raw peer
+errors. Finite labels prevent untrusted hostnames and paths from creating series.
+
+Connection and stream metrics track admitted lifecycles, total creations and
+failures. Relay gauges expose configured limits and current connections, tunnels
+and streams. Runtime metrics report Go heap bytes, goroutines and estimated user/GC/scavenge
+CPU seconds by runtime class, and Node process
+CPU seconds and resident memory bytes; these are not CPU percentages. Request
+histograms measure completed whole lifetimes, not time to first byte. Scrapes have
+connection admission limits, header/write/idle deadlines and context-owned shutdown.

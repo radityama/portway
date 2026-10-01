@@ -66,3 +66,22 @@ func TestInvalidNetworkConfiguration(t *testing.T) {
 		t.Fatal("invalid TLS name accepted")
 	}
 }
+
+func TestOptionalMetricsPortBounds(t *testing.T) {
+	for _, v := range []string{"-1", "65536", "01", "+1", "localhost:9000", ""} {
+		if _, e := RelayEnvironment(lookup(map[string]string{"RELAY_METRICS_PORT": v})); e == nil {
+			t.Fatal("invalid relay metrics port", v)
+		}
+		if _, e := AgentEnvironment(lookup(map[string]string{"PORTWAY_METRICS_PORT": v})); e == nil {
+			t.Fatal("invalid agent metrics port", v)
+		}
+	}
+	r, e := RelayEnvironment(lookup(map[string]string{"RELAY_METRICS_PORT": "9091"}))
+	if e != nil || r.MetricsPort != 9091 {
+		t.Fatal("relay metrics port missing")
+	}
+	a, e := AgentEnvironment(lookup(map[string]string{"PORTWAY_METRICS_PORT": "9092"}))
+	if e != nil || a.MetricsPort != 9092 {
+		t.Fatal("agent metrics port missing")
+	}
+}

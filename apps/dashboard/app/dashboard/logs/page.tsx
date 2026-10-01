@@ -1,6 +1,6 @@
 import { load } from '../../../lib/server';
-import type { Tunnel } from '../../../lib/contracts';
-import { Empty, Failure, Heading } from '../../../components/ui';
+import type { Tunnel, ObservationView } from '../../../lib/contracts';
+import { Empty, Failure, Heading, DateText } from '../../../components/ui';
 import { Refresh } from '../../../components/actions';
 export default async function Logs({
   searchParams,
@@ -11,7 +11,9 @@ export default async function Logs({
     selected = (await searchParams).tunnelId;
   const logs =
     selected && /^[A-Za-z0-9_-]{1,128}$/.test(selected)
-      ? await load<Record<string, unknown>>('/tunnels/' + selected + '/logs')
+      ? await load<Pick<ObservationView, 'available' | 'observedAt' | 'logs'>>(
+          '/tunnels/' + selected + '/logs',
+        )
       : null;
   return (
     <>
@@ -41,26 +43,66 @@ export default async function Logs({
           <button className="button secondary">Load logs</button>
         </form>
         {tunnels.error && <Failure code={tunnels.error} />}
-        {logs?.error === 'NOT_IMPLEMENTED' ? (
-          <Empty title="Traffic logs are coming in Phase 14">
-            The control API does not expose request logs yet. No traffic has
-            been recorded or simulated for this view.
-          </Empty>
-        ) : logs?.error ? (
+        {logs?.error ? (
           <Failure code={logs.error} />
         ) : logs?.value ? (
-          <pre className="log-output">
-            {JSON.stringify(logs.value.data, null, 2)}
-          </pre>
+          !logs.value.data.available ? (
+            <Empty title="Request observations unavailable">
+              Connect this tunnel and send a request to collect recent metadata.
+              Observations expire when relay reports stop.
+            </Empty>
+          ) : logs.value.data.logs.length ? (
+            <>
+              <p className="small muted">
+                Reported <DateText value={logs.value.data.observedAt} />
+              </p>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Method</th>
+                      <th>Status</th>
+                      <th>Duration</th>
+                      <th>Received</th>
+                      <th>Sent</th>
+                      <th>Outcome</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logs.value.data.logs.map((l) => (
+                      <tr key={l.id}>
+                        <td>
+                          <DateText value={l.timestamp} />
+                        </td>
+                        <td>{l.method}</td>
+                        <td>{l.status || '—'}</td>
+                        <td>{l.durationMs.toFixed(1)} ms</td>
+                        <td>{BigInt(l.bytesIn).toLocaleString()} B</td>
+                        <td>{BigInt(l.bytesOut).toLocaleString()} B</td>
+                        <td>{l.outcome}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <Empty title="No recent completed requests">
+              This relay has no completed request records within the retention
+              window.
+            </Empty>
+          )
         ) : (
           <Empty title="Choose a tunnel to inspect">
-            Only activity exposed by the control API appears here.
+            Select a tunnel to view recent request metadata.
           </Empty>
         )}
       </section>
       <p className="small muted">
-        Request metrics, bandwidth and audit browsing await their API contracts.
-        Raw request bodies and credentials are never recorded by this dashboard.
+        The latest four completed requests are retained for up to one hour.
+        URLs, headers and bodies are omitted. These records are not an audit
+        archive.
       </p>
     </>
   );

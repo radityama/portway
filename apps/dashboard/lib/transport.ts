@@ -388,8 +388,14 @@ export function allowedRoute(
   ];
   const collection =
     /^\/(projects|tunnels|domains|relays)$/.test(path) && method === 'GET';
-  for (const key of query.keys())
-    if (!collection || !names.includes(key) || query.getAll(key).length !== 1)
-      return false;
+  const recentLogs =
+    /^\/tunnels\/[A-Za-z0-9_-]+\/logs$/.test(path) && method === 'GET';
+  for (const key of query.keys()) {
+    if (query.getAll(key).length !== 1) return false;
+    if (recentLogs) {
+      if (key !== 'limit' || !/^[1-4]$/.test(query.get(key) ?? ''))
+        return false;
+    } else if (!collection || !names.includes(key)) return false;
+  }
   return true;
 }

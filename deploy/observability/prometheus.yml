@@ -1,0 +1,19 @@
+# Run Prometheus on the same host as these loopback listeners. Enable the
+# corresponding optional ports; provision the API operator file privately.
+global:
+  scrape_interval: 15s
+  scrape_timeout: 5s
+scrape_configs:
+  - job_name: portway-relay
+    static_configs:
+      - targets: ['127.0.0.1:9091']
+  - job_name: portway-agent
+    static_configs:
+      - targets: ['127.0.0.1:9092']
+  - job_name: portway-api
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/portway/relay-api-token
+    static_configs:
+      - targets: ['127.0.0.1:8080']

@@ -38,7 +38,9 @@ type Stream struct {
 
 func (s *Stream) Context() context.Context { return s.ctx }
 func (s *Stream) Read(p []byte) (int, error) {
-	return s.parent.read(s, p)
+	n, err := s.parent.read(s, p)
+	s.parent.opts.Metrics.PayloadIn(n)
+	return n, err
 }
 func (s *Stream) Write(p []byte) (int, error) {
 	s.writeMu.Lock()
@@ -62,6 +64,7 @@ func (s *Stream) Write(p []byte) (int, error) {
 			return total, err
 		}
 		total += n
+		s.parent.opts.Metrics.PayloadOut(n)
 		s.parent.mu.Lock()
 		s.parent.touchLocked(s)
 		s.parent.mu.Unlock()
@@ -125,6 +128,7 @@ func (s *Stream) WaitReceiveClose() error {
 }
 func (s *Stream) finish(err error) {
 	s.once.Do(func() {
+		s.parent.opts.Metrics.StreamClosed(err != nil && err != io.EOF)
 		s.mu.Lock()
 		s.ended = true
 		s.endErr = err

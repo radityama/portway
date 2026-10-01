@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–13 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. Custom domains now use DNS TXT ownership proofs, current-generation relay aliases and reloadable certificates with local issuance and renewal. The dashboard now provides scoped login, overview, tunnel and domain management, read-only relay health and account settings with encrypted HttpOnly sessions. Request logs and metrics await Phase 14.
+Phases 0–14 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. Custom domains now use DNS TXT ownership proofs, current-generation relay aliases and reloadable certificates with local issuance and renewal. The dashboard now provides scoped login, overview, tunnel and domain management, read-only relay health and account settings with encrypted HttpOnly sessions. Phase 14 adds structured request logs, local Prometheus scrapes and bounded, generation-scoped traffic observations.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Phase 12](./docs/PHASE_12.md), [Phase 13](./docs/PHASE_13.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Phase 12](./docs/PHASE_12.md), [Phase 13](./docs/PHASE_13.md), [Phase 14](./docs/PHASE_14.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -391,8 +391,9 @@ Relay health reflects actual API reports. Stored tunnel connection states are
 policy metadata, not live presence measurements. Pages refresh on successful
 mutations or the Refresh button, with automatic polling and link prefetching
 disabled. If a signed cursor expires after an API restart, use First page.
-Settings shows the current organization/role and sign-out. Logs explicitly reports
-that request recording is unavailable; metrics and audit browsing await Phase 14.
+Settings shows the current organization/role and sign-out. Phase 14 adds traffic
+measurements to tunnel details and recent request metadata to Logs. Durable audit
+browsing remains future work.
 Account editing and API-key administration remain operator tasks.
 
 Logout revokes the API session and clears the browser cookie. During an API outage,
@@ -431,3 +432,41 @@ trusted forwarded-client headers or access internal relay/credential endpoints.
 The dashboard is outside the application traffic path and adds no database schema.
 
 See [Phase 13](./docs/PHASE_13.md) and [the browser adapter contract](./docs/API.md#20-phase-13-browser-dashboard-adapter).
+
+## Observability (Phase 14)
+
+Enable optional local operator scrapes before starting the processes:
+
+```bash
+RELAY_METRICS_PORT=9091
+PORTWAY_METRICS_PORT=9092
+```
+
+Both default to 0 (disabled) and always bind to 127.0.0.1. Scrape `/metrics` on
+those ports. The control API exposes `/metrics` at its root with relay operator
+bearer authorization. Keep these operator routes outside public ingress; the
+browser adapter exposes only scoped tunnel observations. A host-local Prometheus
+example is [prometheus.yml](./deploy/observability/prometheus.yml); its API bearer
+comes from a private file rather than configuration text.
+
+Metrics include connection/stream lifecycles and failures, request counts and
+whole-lifetime latency histograms, bytes, relay limits/admission gauges and runtime
+measurements. Go CPU classes are runtime estimates; Node CPU seconds and resident
+memory describe the API process. Agent bytes count DATA payloads, including HTTP
+wire headers; relay HTTP bytes count consumed/emitted bodies, while WebSocket
+bytes include the upgrade response and frames. Labels use fixed method, status
+and route groups; hosts, paths, tunnel IDs and credentials never become labels.
+
+Tunnel details and Logs read the latest fenced relay report. The relay collects
+at most 32 tunnel/generation observations and retains four completed metadata
+records per entry for up to one hour. Idle entries can be evicted; absent, expired
+or superseded observations show unavailable. Reports expire after 15 seconds.
+Counters reset on restart, generation replacement or eviction; these are not
+billing or audit records. Paths, queries, headers, IPs and bodies are omitted.
+Collection stays local during API/database/Redis outages, and reports resume when
+the control plane recovers. Refresh dashboard pages explicitly to read new reports.
+
+Run `pnpm test:observability` after `make build` for real PostgreSQL/Redis, API,
+relay and CLI checks covering HTTP, SSE, WebSockets, cancellation, secret omission
+and outage isolation. It also runs in `make check` and CI. See
+[Phase 14](./docs/PHASE_14.md) and [the API contract](./docs/API.md#phase-14-observability-contract).

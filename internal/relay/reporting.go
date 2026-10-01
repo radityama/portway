@@ -21,8 +21,10 @@ func (s *Server) Snapshot() control.RelayReport {
 	if s.draining {
 		report.Status = "DRAINING"
 	}
+	current := make(map[string]uint64, len(s.sessions))
 	connections := make([]*mux.Conn, 0, len(s.active))
-	for _, owner := range s.sessions {
+	for id, owner := range s.sessions {
+		current[id] = uint64(owner.Generation)
 		if owner.conn != nil && owner.ctx.Err() == nil && time.Now().Before(owner.ExpiresAt) {
 			report.ActiveTunnels++
 			if owner.connection != nil {
@@ -34,6 +36,7 @@ func (s *Server) Snapshot() control.RelayReport {
 	for _, conn := range connections {
 		report.ActiveStreams += conn.ActiveStreams()
 	}
+	report.Observations = s.Metrics.Observations(current)
 	return report
 }
 

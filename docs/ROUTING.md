@@ -731,3 +731,14 @@ a still-valid pair. Expiry rejects new TLS handshakes. A fresh alias snapshot ca
 remove admission while already opened streams finish within their prior lease.
 Operators provision wildcard DNS and custom CNAME/A/AAAA toward the assigned node;
 DNS TXT proves ownership but does not configure ingress or certificates.
+
+## Phase 14 request measurements
+
+Relay ingress updates local request counters and fixed latency bins. A response
+wrapper preserves ResponseController unwrapping, flushing and WebSocket hijacking.
+Body reads/writes count actual successful bytes; hijacked sockets count frame I/O
+and already buffered ingress bytes. No request data is buffered for observation.
+Incomplete responses and client cancellation have separate outcomes. Known tunnel
+observations are tied to the captured current generation, so old request completion
+cannot update a replacement generation's counters. Collection does not call the
+API, Redis, PostgreSQL or a network logging collector from the forwarding path.

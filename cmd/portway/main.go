@@ -18,6 +18,7 @@ import (
 	"github.com/radityama/portway/internal/auth"
 	"github.com/radityama/portway/internal/config"
 	"github.com/radityama/portway/internal/control"
+	"github.com/radityama/portway/internal/observability"
 	"github.com/radityama/portway/internal/protocol"
 	"github.com/radityama/portway/internal/transport"
 )
@@ -126,6 +127,11 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	}
 	dialer := &transport.TLSDialer{Config: tlsConfig, Timeout: cfg.ConnectTimeout}
 	client := agent.NewClient(dialer)
+	stopMetrics, err := observability.Start(cfg.MetricsPort, client.Metrics.WritePrometheus)
+	if err != nil {
+		return fail("cannot start local metrics listener", 1)
+	}
+	defer stopMetrics()
 	client.HandshakeTimeout = cfg.HandshakeTimeout
 	client.IdleTimeout = cfg.IdleTimeout
 	client.WriteTimeout = cfg.WriteTimeout

@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/hex"
+	"github.com/radityama/portway/internal/observability"
 	"github.com/radityama/portway/internal/protocol"
 	"time"
 )
@@ -17,6 +18,7 @@ type Capacity struct {
 	MaxStreams        int `json:"maxStreams"`
 }
 type RelayReport struct {
+	Observations []observability.Observation `json:"observations,omitempty"`
 	Capacity
 	InstanceID string `json:"instanceId"`
 	Status     string `json:"status"`

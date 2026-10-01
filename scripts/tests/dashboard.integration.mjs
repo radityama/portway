@@ -444,7 +444,7 @@ test(
           await page.goto(origin + '/dashboard/logs?tunnelId=' + tunnelId);
           await page
             .getByRole('heading', {
-              name: 'Traffic logs are coming in Phase 14',
+              name: 'Request observations unavailable',
             })
             .waitFor();
           await page.goto(origin + '/dashboard/settings');
@@ -453,6 +453,118 @@ test(
               'owner',
             ),
           );
+        },
+      );
+      await step(
+        'fenced request metadata renders logs and lossless traffic counters',
+        async () => {
+          const phase14Screenshots = join(root, '.tmp/screenshots');
+          mkdirSync(phase14Screenshots, { recursive: true });
+          const prior = await client.tunnel.findUnique({
+            where: { id: tunnelId },
+          });
+          await client.tunnel.update({
+            where: { id: tunnelId },
+            data: { generation: 1, relayId: 'rel_local' },
+          });
+          try {
+            const report = {
+              instanceId: 'f'.repeat(32),
+              status: 'HEALTHY',
+              activeConnections: 1,
+              activeTunnels: 1,
+              retainedTunnels: 1,
+              activeStreams: 0,
+              maxConnections: 128,
+              maxTunnels: 1024,
+              maxStreams: 32,
+              observations: [
+                {
+                  tunnelId,
+                  generation: '1',
+                  requests: '3',
+                  errors: '0',
+                  bytesIn: '12',
+                  bytesOut: '9007199254740993',
+                  activeRequests: 0,
+                  latencyBuckets: Array(12).fill('3'),
+                  latencySumSeconds: 0.06,
+                  logs: [
+                    {
+                      id: 'a'.repeat(32),
+                      timestamp: new Date().toISOString(),
+                      method: 'POST',
+                      status: 201,
+                      durationMs: 20,
+                      bytesIn: '12',
+                      bytesOut: '9007199254740993',
+                      outcome: 'complete',
+                    },
+                  ],
+                },
+              ],
+            };
+            const response = await fetch(
+              apiBase + '/internal/relays/rel_local/register',
+              {
+                method: 'POST',
+                headers: {
+                  Authorization: 'Bearer ' + fixture.relayBearer,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(report),
+              },
+            );
+            assert.equal(response.status, 200);
+            await page.goto(origin + '/dashboard/tunnels/' + tunnelId);
+            const traffic = page.locator('section.panel').filter({
+              has: page.getByRole('heading', {
+                name: 'Traffic',
+                exact: true,
+              }),
+            });
+            assert.ok(
+              (await traffic.textContent()).includes('9,007,199,254,740,993 B'),
+            );
+            assert.ok((await traffic.textContent()).includes('20.0 ms'));
+            await page.getByRole('link', { name: 'Recent logs' }).click();
+            await page.locator('tbody tr').waitFor();
+            assert.equal(await page.locator('tbody tr').count(), 1);
+            assert.ok(
+              (await page.locator('tbody tr').textContent()).includes('POST'),
+            );
+            assert.ok(
+              (await page.locator('tbody tr').textContent()).includes('201'),
+            );
+            await page.setViewportSize({ width: 390, height: 844 });
+            assert.equal(
+              await page.evaluate(
+                () =>
+                  globalThis.document.documentElement.scrollWidth <=
+                  globalThis.innerWidth,
+              ),
+              true,
+            );
+            await page.screenshot({
+              path: join(phase14Screenshots, 'phase14-logs-mobile.png'),
+              fullPage: true,
+            });
+            await page.setViewportSize({ width: 1440, height: 1000 });
+            await page.goto(origin + '/dashboard/tunnels/' + tunnelId);
+            await page.screenshot({
+              path: join(phase14Screenshots, 'phase14-traffic.png'),
+              fullPage: true,
+            });
+          } finally {
+            await client.tunnel.update({
+              where: { id: tunnelId },
+              data: { generation: prior.generation, relayId: prior.relayId },
+            });
+          }
+          await page.goto(origin + '/dashboard/logs?tunnelId=' + tunnelId);
+          await page
+            .getByRole('heading', { name: 'Request observations unavailable' })
+            .waitFor();
         },
       );
       await step(

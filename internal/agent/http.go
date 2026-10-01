@@ -63,7 +63,7 @@ func (s *Session) serveHTTP(address string, shutdown context.Context, ready, dra
 }
 
 func (s *Session) streamOptions(diagnostic bool) mux.Options {
-	return mux.Options{MaxStreams: s.maxStreams, MaxFrame: s.MaxPayloadSize, StreamTimeout: s.streamTimeout, WriteTimeout: s.writeTimeout, IdleTimeout: s.idleTimeout, ExpiresAt: s.ExpiresAt, Heartbeat: s.heartbeat, Diagnostic: diagnostic, GracefulShutdown: s.graceful, ShutdownTimeout: s.shutdownTimeout, Streaming: !diagnostic && s.streaming, WebSocket: !diagnostic && s.websocket, CustomDomains: !diagnostic && s.customDomains}
+	return mux.Options{Metrics: s.metrics, MaxStreams: s.maxStreams, MaxFrame: s.MaxPayloadSize, StreamTimeout: s.streamTimeout, WriteTimeout: s.writeTimeout, IdleTimeout: s.idleTimeout, ExpiresAt: s.ExpiresAt, Heartbeat: s.heartbeat, Diagnostic: diagnostic, GracefulShutdown: s.graceful, ShutdownTimeout: s.shutdownTimeout, Streaming: !diagnostic && s.streaming, WebSocket: !diagnostic && s.websocket, CustomDomains: !diagnostic && s.customDomains}
 }
 
 func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, address string) {

@@ -7,7 +7,8 @@ info:
     scoped projects/tunnels, configured relay metadata and credential issuance in
     PostgreSQL by default (explicit bounded memory mode is available for tests).
     Durable state and revocation survive API restart. Phase 12 implements scoped domains
-    and DNS ownership verification; logs/metrics remain later work. Phase 13 consumes
+    and DNS ownership verification. Phase 14 implements bounded scoped request logs,
+    tunnel observations and operator Prometheus metrics. Phase 13 consumes
     these contracts through a browser dashboard adapter described in API.md; its
     browser-local routes are outside this control-plane base.
     Database admission/transaction failures return 503 STORAGE_UNAVAILABLE. Phase 11
@@ -436,6 +437,21 @@ paths:
         '404':
           $ref: '#/components/responses/ErrorResponse'
 
+  /metrics:
+    get:
+      tags: [Metrics]
+      servers: [{ url: / }]
+      security: [{ relayAuth: [] }]
+      description: Operator-only process metrics with finite labels; excluded from the browser BFF.
+      responses:
+        '200':
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema: { type: string }
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
   /tunnels/{tunnelId}/logs:
     get:
       tags: [Logs]
@@ -445,8 +461,7 @@ paths:
         - $ref: '#/components/parameters/TunnelId'
         - in: query
           name: limit
-          schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
-        - $ref: '#/components/parameters/Cursor'
+          schema: { type: integer, minimum: 1, maximum: 4, default: 4 }
       responses:
         '200':
           $ref: '#/components/responses/LogListResponse'
@@ -899,29 +914,105 @@ components:
         relay: { $ref: '#/components/schemas/Relay' }
         credential: { $ref: '#/components/schemas/IssuedTunnelCredential' }
 
+    Counter:
+      type: string
+      description: Canonical unsigned 64-bit decimal counter; maximum 18446744073709551615.
+      pattern: '^(0|[1-9][0-9]{0,19})$'
     RequestLog:
       type: object
+      additionalProperties: false
       required:
-        [timestamp, method, host, path, status, durationMs, bytesIn, bytesOut]
+        [id, timestamp, method, status, durationMs, bytesIn, bytesOut, outcome]
       properties:
+        id: { type: string, pattern: '^[a-f0-9]{32}$' }
         timestamp: { type: string, format: date-time }
-        method: { type: string }
-        host: { type: string }
-        path: { type: string }
-        status: { type: integer }
-        durationMs: { type: integer, minimum: 0 }
-        bytesIn: { type: integer, format: int64, minimum: 0 }
-        bytesOut: { type: integer, format: int64, minimum: 0 }
-
+        method:
+          {
+            type: string,
+            enum:
+              [
+                GET,
+                POST,
+                PUT,
+                PATCH,
+                DELETE,
+                HEAD,
+                OPTIONS,
+                CONNECT,
+                TRACE,
+                OTHER,
+              ],
+          }
+        status: { type: integer, minimum: 0, maximum: 599 }
+        durationMs: { type: number, minimum: 0, maximum: 9223372036855 }
+        bytesIn: { $ref: '#/components/schemas/Counter' }
+        bytesOut: { $ref: '#/components/schemas/Counter' }
+        outcome: { type: string, enum: [complete, error, canceled] }
     TunnelMetrics:
       type: object
+      additionalProperties: false
+      required:
+        [
+          tunnelId,
+          generation,
+          requests,
+          errors,
+          bytesIn,
+          bytesOut,
+          activeRequests,
+          latencyBuckets,
+          latencySumSeconds,
+        ]
       properties:
-        activeStreams: { type: integer, minimum: 0 }
-        requests: { type: integer, format: int64, minimum: 0 }
-        bytesIn: { type: integer, format: int64, minimum: 0 }
-        bytesOut: { type: integer, format: int64, minimum: 0 }
-        p95LatencyMs: { type: number, minimum: 0 }
-        p99LatencyMs: { type: number, minimum: 0 }
+        tunnelId: { type: string, minLength: 1, maxLength: 128 }
+        generation: { type: string, pattern: '^[1-9][0-9]{0,19}$' }
+        requests: { $ref: '#/components/schemas/Counter' }
+        errors: { $ref: '#/components/schemas/Counter' }
+        bytesIn: { $ref: '#/components/schemas/Counter' }
+        bytesOut: { $ref: '#/components/schemas/Counter' }
+        activeRequests: { type: integer, minimum: 0, maximum: 10000 }
+        latencyBuckets:
+          type: array
+          minItems: 12
+          maxItems: 12
+          description: Cumulative counts for upper bounds 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10 and +Inf seconds.
+          items: { $ref: '#/components/schemas/Counter' }
+        latencySumSeconds: { type: number, minimum: 0 }
+    TunnelObservation:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          tunnelId,
+          generation,
+          requests,
+          errors,
+          bytesIn,
+          bytesOut,
+          activeRequests,
+          latencyBuckets,
+          latencySumSeconds,
+          logs,
+        ]
+      properties:
+        tunnelId: { type: string, minLength: 1, maxLength: 128 }
+        generation: { type: string, pattern: '^[1-9][0-9]{0,19}$' }
+        requests: { $ref: '#/components/schemas/Counter' }
+        errors: { $ref: '#/components/schemas/Counter' }
+        bytesIn: { $ref: '#/components/schemas/Counter' }
+        bytesOut: { $ref: '#/components/schemas/Counter' }
+        activeRequests: { type: integer, minimum: 0, maximum: 10000 }
+        latencyBuckets:
+          type: array
+          minItems: 12
+          maxItems: 12
+          description: Cumulative counts for upper bounds 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10 and +Inf seconds.
+          items: { $ref: '#/components/schemas/Counter' }
+        latencySumSeconds: { type: number, minimum: 0 }
+        logs:
+          type: array
+          maxItems: 4
+          items: { $ref: '#/components/schemas/RequestLog' }
 
     RelayCapacity:
       type: object
@@ -977,6 +1068,10 @@ components:
         - instanceId
         - status
       properties:
+        observations:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/TunnelObservation' }
         activeConnections:
           type: integer
           minimum: 0
@@ -1030,6 +1125,10 @@ components:
         - leaseId
         - sequence
       properties:
+        observations:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/TunnelObservation' }
         activeConnections:
           type: integer
           minimum: 0
@@ -1339,7 +1438,7 @@ components:
                     additionalProperties: true
 
     LogListResponse:
-      description: Metadata-level request logs with sensitive fields redacted.
+      description: Bounded recent metadata; missing/expired/current-generation mismatch returns unavailable.
       content:
         application/json:
           schema:
@@ -1349,15 +1448,19 @@ components:
                 properties:
                   data:
                     type: object
+                    required: [available, observedAt, logs]
                     properties:
+                      available: { type: boolean }
+                      observedAt: { type: [string, 'null'], format: date-time }
                       logs:
                         type: array
+                        maxItems: 4
                         items: { $ref: '#/components/schemas/RequestLog' }
                   meta:
                     type: object
                     properties:
-                      nextCursor: { type: string, nullable: true }
-                    additionalProperties: true
+                      retentionSeconds: { type: integer, enum: [3600] }
+                      maxEntries: { type: integer, enum: [4] }
 
     MetricsResponse:
       description: Aggregated dashboard-friendly tunnel metrics.
@@ -1371,4 +1474,9 @@ components:
                   data:
                     type: object
                     properties:
-                      metrics: { $ref: '#/components/schemas/TunnelMetrics' }
+                      available: { type: boolean }
+                      observedAt: { type: [string, 'null'], format: date-time }
+                      metrics:
+                        oneOf:
+                          - $ref: '#/components/schemas/TunnelMetrics'
+                          - { type: 'null' }

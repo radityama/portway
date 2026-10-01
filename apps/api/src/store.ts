@@ -1,3 +1,4 @@
+import { observationView } from './observations.ts';
 import {
   DNSProof,
   DOMAIN_LIMIT,
@@ -353,6 +354,14 @@ export class ControlStore {
       organization: this.organizations.get(p.organizationId)!,
       role: p.role,
     };
+  }
+  observations(p: Principal, id: string) {
+    const t = this.tunnel(p, id);
+    return observationView(
+      t,
+      t.relayId ? this.presence.get([t.relayId]).get(t.relayId) : undefined,
+      this.now(),
+    );
   }
   relayAccess(bearer: string, relayId?: string) {
     const key = this.relayKeys.get(digest(bearer));

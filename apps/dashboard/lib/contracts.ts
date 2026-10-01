@@ -8,3 +8,9 @@ export type {
 } from '../../api/src/models';
 export type Profile = { user: User; organization: Organization; role: Role };
 export type Proof = { type: 'TXT'; name: string; value: string };
+
+export type {
+  RequestLog,
+  TunnelMetrics,
+  ObservationView,
+} from '../../api/src/observations';

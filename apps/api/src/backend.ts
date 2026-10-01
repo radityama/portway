@@ -46,6 +46,10 @@ export interface ControlBackend {
   logout(p: Principal): Awaitable<void>;
   project(p: Principal, id: string): Awaitable<Project>;
   tunnel(p: Principal, id: string): Awaitable<Tunnel>;
+  observations(
+    p: Principal,
+    id: string,
+  ): Awaitable<import('./observations.ts').ObservationView>;
   relay(id: string): Awaitable<Relay>;
   listProjects(
     p: Principal,

@@ -201,3 +201,11 @@ and request logs/metrics remain unsupported until Phase 14. No persistent schema
 protocol or application data path changes were needed. Browser verification uses
 real production Next.js, PostgreSQL, Redis, DNS, API and Chromium. See
 [PHASE_13.md](./PHASE_13.md).
+
+## Phase 14
+
+Structured metadata logs, local Prometheus scrapes, connection/stream/request
+counters, latency histograms and relay/runtime gauges are implemented. Bounded
+current-generation observations use existing fenced presence reports; scoped API
+reads and the dashboard expose recent logs and traffic measurements. Collection
+stays local during control outages. See [PHASE_14.md](./PHASE_14.md).

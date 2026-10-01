@@ -8,6 +8,8 @@ import { Database, databaseClient } from './database.ts';
 import { PrismaStore } from './prisma-store.ts';
 import { RedisPresence } from './presence.ts';
 
+const log = (event: import('./metrics.ts').ProcessLog) =>
+  console.log(JSON.stringify(event));
 let app: ReturnType<typeof createApp>;
 let database: Database | undefined;
 let presence: RedisPresence | undefined;
@@ -20,10 +22,11 @@ try {
   if (env.storage === 'postgres') {
     database = new Database(databaseClient(env.databaseUrl));
     presence = new RedisPresence(env.redisUrl);
-    app = createApp(new PrismaStore(database, presence, options));
+    app = createApp(new PrismaStore(database, presence, options), log);
   } else
     app = createApp(
       new ControlStore({ ...options, seed: loadSeed(env.seedFile) }),
+      log,
     );
 } catch {
   console.error(JSON.stringify({ event: 'api_configuration_failed' }));

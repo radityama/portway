@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/radityama/portway/internal/observability"
 	"github.com/radityama/portway/internal/protocol"
 	"github.com/radityama/portway/internal/transport"
 )
@@ -21,6 +22,7 @@ type RemoteError struct{ Code string }
 func (e *RemoteError) Error() string { return "stream failed: " + e.Code }
 
 type Options struct {
+	Metrics           *observability.Metrics
 	MaxStreams        int
 	MaxFrame          uint32
 	StreamTimeout     time.Duration
@@ -165,6 +167,7 @@ func (c *Conn) newStreamLocked(ctx context.Context, id uint64) *Stream {
 	}
 	s := &Stream{parent: c, id: id, ctx: life, cancel: cancel, ready: make(chan error, 1), sendWindow: protocol.InitialStreamWindow, recvWindow: protocol.InitialStreamWindow}
 	c.streams[id] = s
+	c.opts.Metrics.StreamOpened()
 	c.touchLocked(s)
 	s.mu.Lock()
 	s.stop = context.AfterFunc(life, func() {

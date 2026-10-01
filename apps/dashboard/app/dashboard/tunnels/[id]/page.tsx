@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { Traffic } from '../../../../components/traffic';
+import type { ObservationView } from '../../../../lib/contracts';
 import { load, profile } from '../../../../lib/server';
 import type { Domain, Tunnel } from '../../../../lib/contracts';
 import {
@@ -17,10 +19,13 @@ export default async function Detail({
   const { id } = await params;
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(id))
     return <Failure code="TUNNEL_NOT_FOUND" />;
-  const [account, detail, domains] = await Promise.all([
+  const [account, detail, domains, observations] = await Promise.all([
     profile(),
     load<{ tunnel: Tunnel }>('/tunnels/' + id),
     load<{ domains: Domain[] }>('/domains?limit=50&tunnelId=' + id),
+    load<Pick<ObservationView, 'available' | 'observedAt' | 'metrics'>>(
+      '/tunnels/' + id + '/metrics',
+    ),
   ]);
   if (!detail.value)
     return (
@@ -121,6 +126,7 @@ export default async function Detail({
           )}
         </section>
       </div>
+      <Traffic data={observations.value?.data} error={observations.error} />
       <section className="panel">
         <div className="panel-heading">
           <h2>Custom domains</h2>

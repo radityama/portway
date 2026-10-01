@@ -16,6 +16,7 @@ import (
 
 	"github.com/radityama/portway/internal/httpwire"
 	"github.com/radityama/portway/internal/mux"
+	"github.com/radityama/portway/internal/observability"
 	"github.com/radityama/portway/internal/protocol"
 )
 
@@ -159,6 +160,20 @@ func (c *limitedConn) Close() error {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	observation := s.Metrics.Begin(r.Method)
+	writer := &observability.Writer{ResponseWriter: w, Request: observation}
+	w = writer
+	if r.Body != nil {
+		r.Body = &observability.Body{ReadCloser: r.Body, Request: observation}
+	}
+	defer func() {
+		failure := recover()
+		record := observation.Finish(writer.Status, failure != nil, r.Context().Err() != nil)
+		s.Logger.Info("http_request_completed", "method", record.Method, "status", record.Status, "duration_ms", record.DurationMS, "bytes_in", record.BytesIn, "bytes_out", record.BytesOut, "outcome", record.Outcome)
+		if failure != nil {
+			panic(failure)
+		}
+	}()
 	s.mu.Lock()
 	if s.draining {
 		s.mu.Unlock()
@@ -234,6 +249,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-timer.C:
 		}
+	}
+	if known && owner != nil {
+		observation.Bind(owner.TunnelID, uint64(owner.Generation))
 	}
 	if !known {
 		httpFailure(w, "tunnel not found", 404)

@@ -1,3 +1,4 @@
+import { Metrics, type ProcessLog } from './metrics.ts';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
@@ -98,8 +99,20 @@ function pagination(values: URLSearchParams) {
   if (!/^[1-9][0-9]{0,2}$/.test(raw) || Number(raw) > 100) invalid();
   return { limit: Number(raw), cursor: values.get('cursor') ?? undefined };
 }
-export function createApp(store: ControlBackend = new ControlStore()) {
+export function createApp(
+  store: ControlBackend = new ControlStore(),
+  log?: (event: ProcessLog) => void,
+) {
+  const metrics = new Metrics(log);
   const app = new Hono<{ Variables: { principal: Principal } }>();
+  app.use('*', async (c, next) => {
+    const finish = metrics.begin(c.req.method, c.req.path);
+    try {
+      await next();
+    } finally {
+      finish(c.res.status);
+    }
+  });
   let active = 0;
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
@@ -150,6 +163,13 @@ export function createApp(store: ControlBackend = new ControlStore()) {
     store.rate('key:' + p.keyHash);
     c.set('principal', p);
     await next();
+  });
+  app.get('/metrics', async (c) => {
+    query(c.req.url, []);
+    await store.relayAccess(bearer(c.req.header('Authorization')));
+    return c.text(metrics.text(), 200, {
+      'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
+    });
   });
   app.get('/health', (c) =>
     c.json({ data: { status: 'ok' }, error: null, meta: {} }),
@@ -562,19 +582,32 @@ export function createApp(store: ControlBackend = new ControlStore()) {
       meta: {},
     });
   });
-  for (const path of [
-    '/api/v1/tunnels/:id/logs',
-    '/api/v1/tunnels/:id/metrics',
-  ])
-    app.all(path, async (c) => {
-      if (path.includes(':id'))
-        await store.tunnel(c.get('principal'), id(c.req.param('id')));
-      throw new ApiFailure(
-        501,
-        'NOT_IMPLEMENTED',
-        'Endpoint is not implemented',
-      );
+  app.get('/api/v1/tunnels/:id/metrics', async (c) => {
+    query(c.req.url, []);
+    const { available, observedAt, metrics } = await store.observations(
+      c.get('principal'),
+      id(c.req.param('id')),
+    );
+    return c.json({
+      data: { available, observedAt, metrics },
+      error: null,
+      meta: {},
     });
+  });
+  app.get('/api/v1/tunnels/:id/logs', async (c) => {
+    query(c.req.url, ['limit']);
+    const raw = c.req.query('limit');
+    if (raw !== undefined && !/^[1-4]$/.test(raw)) invalid();
+    const { available, observedAt, logs } = await store.observations(
+      c.get('principal'),
+      id(c.req.param('id')),
+    );
+    return c.json({
+      data: { available, observedAt, logs: logs.slice(0, Number(raw ?? 4)) },
+      error: null,
+      meta: { retentionSeconds: 3600, maxEntries: 4 },
+    });
+  });
   app.notFound((c) =>
     c.json(
       {

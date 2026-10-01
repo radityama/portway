@@ -442,8 +442,8 @@ above. The API uses a bounded process-local store loaded from optional private
 API_SEED_FILE JSON. State is lost at API restart; this is the pre-database boundary,
 not durable persistence. PostgreSQL/migrations are Phase 10; dynamic relay
 registration, health, capacity and failover are Phase 11. Phase 12 implements
-domains as specified in section 19. Logs/metrics remain later endpoints and return
-the normal NOT_IMPLEMENTED envelope.
+domains as specified in section 19. Phase 14 adds scoped logs/metrics as specified
+in the observability contract below.
 
 Authentication uses deployment-provisioned API keys (hashes only in the seed),
 with userId, organizationId, expiresAt and revokedAt. An active matching membership
@@ -755,7 +755,8 @@ the dashboard origin and are outside the control-plane OpenAPI base.
   so another change cannot overlap an unfinished view update. One-time proof forms
   defer that reload until acknowledgement/close to retain their current value.
   Link prefetching and automatic polling are disabled. Browser
-  sessions receive no relay credentials.
+  sessions receive no relay credentials. Phase 14 permits only `limit=1..4` on
+  recent-log reads and no query parameters on tunnel metrics reads.
 - Every mutation requires exact Origin equality with DASHBOARD_ORIGIN, JSON content
   type and same-origin browser semantics; missing/cross-origin requests fail before
   API access. Inbound bodies are bounded to 64 KiB with a 5s deadline, API replies
@@ -780,5 +781,48 @@ presence. Tunnel actions create policy/revoke and show a CLI command, without
 changing generations just to render a page. Relays are read-only for user keys.
 Domain forms expose the ownership lifecycle and distinguish ACTIVE routing policy
 from certificate readiness. Settings shows scoped account/organization/role and
-logout. Logs shows the scoped API result, including honest 501 NOT_IMPLEMENTED;
-request metrics, traffic recording and audit browsing await supported API contracts.
+logout. Phase 14 adds scoped recent request metadata and traffic measurements.
+Durable audit browsing remains future work.
+
+## Phase 14 observability contract
+
+`GET /api/v1/tunnels/:id/metrics` and `/logs` enforce the same organization,
+project and tunnel scope as tunnel reads, including viewers. They read existing
+relay presence; they never contact a relay. Revoked, expired, missing, evicted or
+superseded observations return `available: false`, `observedAt: null`, null
+metrics or empty logs. Dependency failures remain 503. Available responses include
+`observedAt` (relay report receipt time) and current-generation observations.
+
+Metrics data is `{available, observedAt, metrics}`. Metrics contain tunnelId,
+generation, requests, errors, bytesIn, bytesOut (canonical unsigned 64-bit decimal
+strings), activeRequests, latencyBuckets (12 cumulative decimal counters), and
+latencySumSeconds. Errors count 5xx responses, interrupted forwarding and
+cancellation; ordinary 4xx rejections remain status counters. Scoped byte totals
+cover completed requests; operator byte counters also include active requests.
+Histogram upper bounds in seconds are 0.005, 0.01, 0.025,
+0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10 and +Inf. Durations include the whole request
+lifetime, including streaming. Percentiles are not invented from these bins.
+
+Logs data is `{available, observedAt, logs}`; optional `limit` is 1..4 (default 4),
+unknown or duplicate query parameters fail validation. No cursor or historical
+pagination. Metadata includes `retentionSeconds: 3600` and `maxEntries: 4`. Each
+record contains id, timestamp, normalized method, status (0 before any response),
+durationMs, decimal bytesIn/bytesOut and outcome (complete, error, canceled).
+Paths, queries, hostnames, IPs, headers, credentials and bodies are omitted.
+
+Existing relay register/report bodies optionally include `observations`: at most
+32 distinct tunnel snapshots, each containing the metrics above plus at most 4
+recent logs. These snapshots share the existing instance/lease/sequence fencing,
+15-second presence TTL, 64-KiB request bound and atomic replacement. Older relays
+may omit observations. A relay caches at most 32 tunnel/generation observations
+for one hour and evicts idle entries; global operator counters remain complete
+when scoped collection is full. Counters are process/cache lifetime values, not
+durable usage records. HTTP byte counters measure consumed/emitted body bytes;
+WebSocket counters include upgrade response bytes and frame bytes after hijack.
+
+`GET /metrics` (outside the versioned API base) returns Prometheus text only after
+relay operator bearer authorization. It is excluded from the browser BFF and
+public ingress. Relay and CLI scrapes bind only to 127.0.0.1 when optional
+`RELAY_METRICS_PORT` / `PORTWAY_METRICS_PORT` (1..65535) are set; 0 disables them.
+These local operator endpoints expose no tunnel IDs or request targets. Metrics
+use finite method/status/route groups; no arbitrary input becomes a label.

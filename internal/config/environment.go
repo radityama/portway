@@ -15,6 +15,7 @@ var ErrEnvironment = errors.New("invalid Portway connection environment")
 type Lookup func(string) (string, bool)
 
 type Relay struct {
+	MetricsPort                                        int
 	PublicManifest                                     string
 	TLSReloadInterval                                  time.Duration
 	APIURL, APICAFile, APITokenFile, RelayID           string
@@ -44,6 +45,7 @@ type Relay struct {
 }
 
 type Agent struct {
+	MetricsPort                     int
 	APIURL, APICAFile, APITokenFile string
 	APITimeout                      time.Duration
 	ShutdownTimeout                 time.Duration
@@ -85,6 +87,14 @@ func port(env Lookup) (string, error) {
 	return strconv.Itoa(parsed), nil
 }
 
+func metricsPort(env Lookup, key string) (int, error) {
+	raw := value(env, key, "0")
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 || n > 65535 || raw != strconv.Itoa(n) {
+		return 0, ErrEnvironment
+	}
+	return n, nil
+}
 func RelayEnvironment(env Lookup) (Relay, error) {
 	p, err := port(env)
 	if err != nil {
@@ -95,6 +105,10 @@ func RelayEnvironment(env Lookup) (Relay, error) {
 		return Relay{}, ErrEnvironment
 	}
 	cfg := Relay{Address: net.JoinHostPort(host, p), CertFile: value(env, "RELAY_TLS_CERT_FILE", ".tmp/dev/relay-cert.pem"), KeyFile: value(env, "RELAY_TLS_KEY_FILE", ".tmp/dev/relay-key.pem"), CredentialsFile: value(env, "RELAY_CREDENTIALS_FILE", ".tmp/dev/relay-credentials.json")}
+	cfg.MetricsPort, err = metricsPort(env, "RELAY_METRICS_PORT")
+	if err != nil {
+		return Relay{}, err
+	}
 	cfg.APIURL = value(env, "RELAY_API_URL", "")
 	cfg.APITokenFile = value(env, "RELAY_API_TOKEN_FILE", "")
 	cfg.APICAFile = value(env, "RELAY_API_CA_FILE", "")
@@ -191,6 +205,10 @@ func AgentEnvironment(env Lookup) (Agent, error) {
 		return Agent{}, err
 	}
 	cfg := Agent{Address: value(env, "PORTWAY_RELAY_ADDR", net.JoinHostPort("127.0.0.1", p)), CAFile: value(env, "PORTWAY_RELAY_CA_FILE", ".tmp/dev/ca.pem"), TokenFile: value(env, "PORTWAY_TOKEN_FILE", ".tmp/dev/agent-token")}
+	cfg.MetricsPort, err = metricsPort(env, "PORTWAY_METRICS_PORT")
+	if err != nil {
+		return Agent{}, err
+	}
 	cfg.APIURL = value(env, "PORTWAY_API_URL", "http://localhost:8080/api/v1")
 	cfg.APITokenFile = value(env, "PORTWAY_API_TOKEN_FILE", "")
 	cfg.APICAFile = value(env, "PORTWAY_API_CA_FILE", "")

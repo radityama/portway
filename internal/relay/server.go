@@ -19,6 +19,7 @@ import (
 	"github.com/radityama/portway/internal/auth"
 	"github.com/radityama/portway/internal/control"
 	"github.com/radityama/portway/internal/mux"
+	"github.com/radityama/portway/internal/observability"
 	"github.com/radityama/portway/internal/protocol"
 	"github.com/radityama/portway/internal/transport"
 )
@@ -28,6 +29,7 @@ var ErrCapacity = errors.New("relay connection limit reached")
 var ErrDraining = errors.New("relay draining")
 
 type Server struct {
+	Metrics              *observability.Metrics
 	Logger               *slog.Logger
 	TLSConfig            *tls.Config
 	Authenticator        auth.Verifier
@@ -62,7 +64,7 @@ func NewServer(logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &Server{Logger: logger, MaxConnections: 128, MaxPublicConnections: 128, HandshakeTimeout: 10 * time.Second,
+	return &Server{Metrics: observability.New("relay"), Logger: logger, MaxConnections: 128, MaxPublicConnections: 128, HandshakeTimeout: 10 * time.Second,
 		RegistrationTimeout: 10 * time.Second, PublicBaseDomain: "portway.localhost", MaxTunnels: 1024,
 		ReadIdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxStreams: 32, StreamTimeout: 30 * time.Second,
 		MaxFrame: protocol.MaxPayloadSize, ShutdownTimeout: 10 * time.Second, sessions: make(map[string]*registryEntry), hostnames: make(map[string]string), domains: make(map[string]control.DomainRoute), active: make(map[net.Conn]struct{}), httpServers: make(map[*http.Server]*limitedListener), changed: make(chan struct{}), shutdownDone: make(chan struct{})}
@@ -160,7 +162,11 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 	return s.serveAdmitted(ctx, conn)
 }
 
-func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
+func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) (result error) {
+	s.Metrics.ConnectionOpened()
+	defer func() {
+		s.Metrics.ConnectionClosed(result != nil && ctx.Err() == nil && !errors.Is(result, io.EOF) && !errors.Is(result, mux.ErrDraining) && !errors.Is(result, mux.ErrPeerShutdown))
+	}()
 	defer s.release(raw)
 	defer raw.Close()
 	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
@@ -274,7 +280,7 @@ func (s *Server) serveAdmitted(ctx context.Context, raw net.Conn) error {
 	graceful := slices.Contains(ack.Capabilities, protocol.CapabilityGracefulShutdown)
 	httpMode := request.Protocol == "http"
 	if httpMode || heartbeat || graceful {
-		streams, err = mux.New(ctx, conn, reader, mux.Options{MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt, Diagnostic: !httpMode, Heartbeat: heartbeat, GracefulShutdown: graceful, ShutdownTimeout: s.ShutdownTimeout, CustomDomains: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityCustomDomains), Streaming: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), WebSocket: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming) && slices.Contains(ack.Capabilities, protocol.CapabilityWebSocket)})
+		streams, err = mux.New(ctx, conn, reader, mux.Options{Metrics: s.Metrics, MaxStreams: int(s.MaxStreams), MaxFrame: ack.MaxPayloadSize, StreamTimeout: s.StreamTimeout, WriteTimeout: s.WriteTimeout, IdleTimeout: s.ReadIdleTimeout, ExpiresAt: identity.ExpiresAt, Diagnostic: !httpMode, Heartbeat: heartbeat, GracefulShutdown: graceful, ShutdownTimeout: s.ShutdownTimeout, CustomDomains: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityCustomDomains), Streaming: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), WebSocket: httpMode && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming) && slices.Contains(ack.Capabilities, protocol.CapabilityWebSocket)})
 		if err != nil {
 			return err
 		}

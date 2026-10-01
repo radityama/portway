@@ -13,6 +13,7 @@ import (
 	"github.com/radityama/portway/internal/certificates"
 	"github.com/radityama/portway/internal/config"
 	"github.com/radityama/portway/internal/control"
+	"github.com/radityama/portway/internal/observability"
 	"github.com/radityama/portway/internal/relay"
 	"github.com/radityama/portway/internal/transport"
 )
@@ -95,6 +96,14 @@ func main() {
 		logger.Error("public_listen_failed")
 		os.Exit(1)
 	}
+	stopMetrics, err := observability.Start(cfg.MetricsPort, server.WritePrometheus)
+	if err != nil {
+		listener.Close()
+		publicListener.Close()
+		logger.Error("relay_metrics_listen_failed")
+		os.Exit(1)
+	}
+	defer stopMetrics()
 	logger.Info("relay_listening", "address", cfg.Address, "transport", "tls", "protocol", transport.ALPN)
 	logger.Info("public_https_listening", "address", cfg.PublicAddress)
 	life, cancel := context.WithCancel(context.Background())

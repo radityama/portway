@@ -1,5 +1,6 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { createClient } from 'redis';
+import { parseObservations, type Observation } from './observations.ts';
 import type { Relay } from './models.ts';
 import { ApiFailure, fields, invalid, id, hash } from './validation.ts';
 export const PRESENCE_TTL = 15_000;
@@ -13,6 +14,7 @@ export type Capacity = {
   maxStreams: number;
 };
 export type Report = Capacity & {
+  observations?: Observation[];
   instanceId: string;
   status: 'HEALTHY' | 'DEGRADED' | 'DRAINING';
 };
@@ -68,6 +70,7 @@ export function parseReport(
     ...capacities,
     'instanceId',
     'status',
+    'observations',
     ...(update ? ['leaseId', 'sequence'] : []),
   ]);
   const instanceId = incarnation(body.instanceId);
@@ -105,7 +108,14 @@ export function parseReport(
     values.activeStreams > values.activeTunnels * values.maxStreams
   )
     invalid();
-  return { ...values, instanceId, status: body.status as Report['status'] };
+  return {
+    ...values,
+    instanceId,
+    status: body.status as Report['status'],
+    ...(body.observations === undefined
+      ? {}
+      : { observations: parseObservations(body.observations) }),
+  };
 }
 function fingerprint(report: Report) {
   return createHash('sha256').update(JSON.stringify(report)).digest('hex');
@@ -213,7 +223,10 @@ elseif ARGV[1]~='register' then return '!expired' end
 local clock=redis.call('TIME')
 value.seenAt=tonumber(clock[1])*1000+math.floor(tonumber(clock[2])/1000)
 value.expiresAt=value.seenAt+tonumber(ARGV[3])
-local encoded=cjson.encode(value)
+-- Preserve validated JSON arrays and decimal strings. Lua cjson re-encoding
+-- turns empty log/observation arrays into objects. Only the root clock fields
+-- are added here; the caller omits them from the canonical object.
+local encoded=string.sub(ARGV[2],1,-2)..',"seenAt":'..string.format('%.0f',value.seenAt)..',"expiresAt":'..string.format('%.0f',value.expiresAt)..'}'
 redis.call('SET',KEYS[1],encoded,'PX',ARGV[3])
 return encoded`;
 export class RedisPresence implements PresenceStore {
@@ -274,7 +287,7 @@ export class RedisPresence implements PresenceStore {
   }
   private decode(raw: string): Presence {
     try {
-      if (raw.length > 2048) throw unavailable();
+      if (Buffer.byteLength(raw) > 67_584) throw unavailable();
       const v = JSON.parse(raw) as Presence;
       fields(v as unknown as Record<string, unknown>, [
         ...capacities,
@@ -286,15 +299,18 @@ export class RedisPresence implements PresenceStore {
         'seenAt',
         'expiresAt',
         'fingerprint',
+        'observations',
       ]);
       id(v.relayId);
       hash(v.fingerprint);
       parseReport(
         Object.fromEntries(
-          [...capacities, 'instanceId', 'status'].map((k) => [
-            k,
-            v[k as keyof Presence],
-          ]),
+          [
+            ...capacities,
+            'instanceId',
+            'status',
+            ...(v.observations === undefined ? [] : ['observations']),
+          ].map((k) => [k, v[k as keyof Presence]]),
         ),
       );
       incarnation(v.leaseId);
@@ -325,7 +341,15 @@ export class RedisPresence implements PresenceStore {
         .withCommandOptions({ timeout: 1000 })
         .eval(updateScript, {
           keys: [this.key(relayId)],
-          arguments: [action, JSON.stringify(value), String(PRESENCE_TTL)],
+          arguments: [
+            action,
+            JSON.stringify({
+              ...value,
+              seenAt: undefined,
+              expiresAt: undefined,
+            }),
+            String(PRESENCE_TTL),
+          ],
         });
       if (raw === '!stale') stale();
       if (raw === '!expired') expired();

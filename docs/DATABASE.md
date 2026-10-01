@@ -569,3 +569,15 @@ challenge rotation and operator metadata audit use existing writer transactions.
 DNS lookup happens outside transactions and commits only after a current hash,
 expiry, state and authorization recheck. Private certificates/CA keys remain in
 operator-managed private files, never in application tables or API responses.
+
+## Phase 14 ephemeral observations
+
+No durable entity or migration is added. The existing fenced relay presence value
+may include at most 32 tunnel/generation observations and 4 recent metadata records
+per observation. Values remain bounded by the report request limit; Redis decode
+is bounded to 64 KiB plus presence-envelope overhead. Sequence checks, duplicate
+report behavior and expiry apply atomically to capacity and observations together.
+The API rechecks tunnel scope and current relay/generation after a presence read.
+Revoked tunnels and observations from superseded assignments are unavailable.
+Local records expire after one hour, and presence itself expires after 15 seconds.
+These measurements are not durable UsageRecord or AuditLog data.

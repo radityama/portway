@@ -106,8 +106,8 @@ export function timestamp(value: unknown): number {
   return Date.parse(value);
 }
 
-// JSON.parse establishes syntax; a bounded lexical scan rejects duplicate root
-// properties, including escaped aliases. All request schemas are flat objects.
+// JSON.parse establishes syntax; a bounded lexical scan rejects duplicate keys
+// at every object depth, including escaped aliases in observation snapshots.
 export function parseObject(raw: string): Record<string, unknown> {
   let parsed: unknown;
   try {
@@ -116,8 +116,7 @@ export function parseObject(raw: string): Record<string, unknown> {
     return invalid();
   }
   const result = object(parsed);
-  const seen = new Set<string>();
-  let depth = 0;
+  const stack: (Set<string> | null)[] = [];
   for (let i = 0; i < raw.length; i++) {
     const c = raw[i];
     if (c === '"') {
@@ -128,13 +127,16 @@ export function parseObject(raw: string): Record<string, unknown> {
       }
       let next = i + 1;
       while (/\s/.test(raw[next] ?? '') && next < raw.length) next++;
-      if (depth === 1 && raw[next] === ':') {
+      if (raw[next] === ':') {
+        const seen = stack.at(-1);
+        if (!seen) invalid();
         const key = JSON.parse(raw.slice(start, i + 1)) as string;
         if (seen.has(key)) return invalid();
         seen.add(key);
       }
-    } else if (c === '{' || c === '[') depth++;
-    else if (c === '}' || c === ']') depth--;
+    } else if (c === '{') stack.push(new Set());
+    else if (c === '[') stack.push(null);
+    else if (c === '}' || c === ']') stack.pop();
   }
   return result;
 }

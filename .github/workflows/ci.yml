@@ -52,5 +52,6 @@ jobs:
       - run: pnpm test:fleet
       - run: pnpm test:domains-api
       - run: pnpm test:domains
+      - run: pnpm test:observability
       - run: pnpm test:dashboard
       - run: pnpm test:bootstrap

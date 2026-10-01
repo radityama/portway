@@ -1,3 +1,4 @@
+import { observationView } from './observations.ts';
 import {
   DOMAIN_LIMIT,
   ROUTE_TTL,
@@ -242,6 +243,15 @@ export class PrismaStore implements ControlBackend {
     return this.database.work(false, async (tx) => {
       await this.check(tx, p, true, admin);
     });
+  }
+  async observations(p: Principal, id: string) {
+    const prior = await this.tunnel(p, id);
+    const presence = prior.relayId
+      ? (await this.presence.get([prior.relayId])).get(prior.relayId)
+      : undefined;
+    // Redis I/O is outside the transaction. Recheck authorization and assignment.
+    const current = await this.tunnel(p, id);
+    return observationView(current, presence, this.now());
   }
   relayAccess(bearer: string, relayId?: string) {
     return this.database.work(false, async (tx) => {

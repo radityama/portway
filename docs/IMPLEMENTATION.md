@@ -424,10 +424,10 @@ storage; dashboard reads never allocate generations or connect credentials.
 Role-aware forms create projects/tunnels and manage one-time domain proofs,
 verification, activation and disabling. Revocation requires confirmation. Lists
 use signed API cursors; overview counts describe bounded metadata. Relays are
-read-only. Logs reports the API's current 501; settings shows scoped membership
-and logout. Responsive layouts, API outage/restart recovery, CSRF, tenant/viewer
+read-only; settings shows scoped membership and logout. Responsive layouts, API outage/restart recovery, CSRF, tenant/viewer
 rules and session tampering are covered by real Chromium/PostgreSQL/DNS tests.
-Traffic metrics, request recording and audit browsing await Phase 14 contracts.
+Phase 14 adds traffic metrics and recent request metadata. Durable audit browsing
+remains future work.
 See [PHASE_13.md](./PHASE_13.md) for verification and operating boundaries.
 
 ## 18. Phase 14 — Observability
@@ -445,6 +445,13 @@ Add:
 Optional later:
 
 - OpenTelemetry traces
+
+Phase 14 implements local finite-label scrapes, structured metadata logs, connection
+and stream lifecycles, request counters/histograms, runtime/capacity gauges, and
+bounded tunnel observations in existing fenced presence reports. Scoped API reads
+and the dashboard expose real observations, including unavailable/expired states.
+No durable schema, application payload archive or protocol frame changes. See
+[PHASE_14.md](./PHASE_14.md) for verification and operating limits.
 
 ## 19. Phase 15 — Security Hardening
 

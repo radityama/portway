@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/radityama/portway/internal/mux"
+	"github.com/radityama/portway/internal/observability"
 	"github.com/radityama/portway/internal/protocol"
 	"github.com/radityama/portway/internal/transport"
 )
@@ -31,6 +32,7 @@ func (e *AuthenticationError) Error() string { return "relay authentication fail
 func (e *AuthenticationError) Unwrap() error { return ErrAuthentication }
 
 type Client struct {
+	Metrics             *observability.Metrics
 	Transport           transport.Transport
 	HandshakeTimeout    time.Duration
 	RegistrationTimeout time.Duration
@@ -43,10 +45,11 @@ type Client struct {
 }
 
 func NewClient(dialer transport.Transport) *Client {
-	return &Client{Transport: dialer, HandshakeTimeout: 10 * time.Second, RegistrationTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxFrame: protocol.MaxPayloadSize, MaxStreams: 32, StreamTimeout: 30 * time.Second, ShutdownTimeout: 10 * time.Second}
+	return &Client{Metrics: observability.New("agent"), Transport: dialer, HandshakeTimeout: 10 * time.Second, RegistrationTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, WriteTimeout: 5 * time.Second, MaxFrame: protocol.MaxPayloadSize, MaxStreams: 32, StreamTimeout: 30 * time.Second, ShutdownTimeout: 10 * time.Second}
 }
 
 type Session struct {
+	metrics             *observability.Metrics
 	ConnectionID        string
 	ExpiresAt           time.Time
 	MaxPayloadSize      uint32
@@ -74,7 +77,13 @@ type Session struct {
 	state atomic.Uint32
 }
 
-func (c *Client) Connect(ctx context.Context, address, token string) (*Session, error) {
+func (c *Client) Connect(ctx context.Context, address, token string) (session *Session, result error) {
+	c.Metrics.ConnectionOpened()
+	defer func() {
+		if result != nil {
+			c.Metrics.ConnectionClosed(ctx.Err() == nil)
+		}
+	}()
 	if c.ShutdownTimeout <= 0 || c.ShutdownTimeout > time.Minute {
 		return nil, ErrConfig
 	}
@@ -167,7 +176,7 @@ func (c *Client) Connect(ctx context.Context, address, token string) (*Session, 
 		return nil, err
 	}
 	keep = true
-	return &Session{ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), flowControl: slices.Contains(ack.Capabilities, protocol.CapabilityFlowControl), heartbeat: slices.Contains(ack.Capabilities, protocol.CapabilityHeartbeat), graceful: slices.Contains(ack.Capabilities, protocol.CapabilityGracefulShutdown), streaming: slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), websocket: slices.Contains(ack.Capabilities, protocol.CapabilityWebSocket) && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), customDomains: slices.Contains(ack.Capabilities, protocol.CapabilityCustomDomains), shutdownTimeout: c.ShutdownTimeout, maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
+	return &Session{metrics: c.Metrics, ConnectionID: authenticated.ConnectionID, ExpiresAt: authenticated.ExpiresAt, MaxPayloadSize: ack.MaxPayloadSize, conn: conn, reader: reader, ctx: ctx, idleTimeout: c.IdleTimeout, registrationTimeout: c.RegistrationTimeout, writeTimeout: c.WriteTimeout, stop: stop, multiplexing: slices.Contains(ack.Capabilities, protocol.CapabilityMultiplexing), flowControl: slices.Contains(ack.Capabilities, protocol.CapabilityFlowControl), heartbeat: slices.Contains(ack.Capabilities, protocol.CapabilityHeartbeat), graceful: slices.Contains(ack.Capabilities, protocol.CapabilityGracefulShutdown), streaming: slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), websocket: slices.Contains(ack.Capabilities, protocol.CapabilityWebSocket) && slices.Contains(ack.Capabilities, protocol.CapabilityStreaming), customDomains: slices.Contains(ack.Capabilities, protocol.CapabilityCustomDomains), shutdownTimeout: c.ShutdownTimeout, maxStreams: c.MaxStreams, streamTimeout: c.StreamTimeout}, nil
 }
 
 // Wait owns the session reader until closure. Closing the session or cancelling
@@ -283,7 +292,7 @@ func (s *Session) Register(ctx context.Context, request protocol.Register) (prot
 }
 
 func (s *Session) Close() {
-	s.closeOnce.Do(func() { s.state.Store(4); s.stop(); transport.Close(s.conn) })
+	s.closeOnce.Do(func() { s.metrics.ConnectionClosed(false); s.state.Store(4); s.stop(); transport.Close(s.conn) })
 }
 func earlier(a, b time.Time) time.Time {
 	if a.Before(b) {

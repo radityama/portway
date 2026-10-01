@@ -146,6 +146,27 @@ test('strict origin and metadata allowlist exclude cross-site, internal and cred
     false,
   );
 });
+test('scoped observation routes permit only bounded recent-log limits', () => {
+  assert.equal(
+    allowedRoute('/tunnels/tnl_a/logs', 'GET', new URLSearchParams('limit=4')),
+    true,
+  );
+  for (const query of ['limit=5', 'limit=04', 'cursor=one', 'limit=1&limit=2'])
+    assert.equal(
+      allowedRoute('/tunnels/tnl_a/logs', 'GET', new URLSearchParams(query)),
+      false,
+    );
+  assert.equal(
+    allowedRoute(
+      '/tunnels/tnl_a/metrics',
+      'GET',
+      new URLSearchParams('limit=1'),
+    ),
+    false,
+  );
+  assert.equal(allowedRoute('/metrics', 'GET', new URLSearchParams()), false);
+});
+
 test('body parsing bounds actual streamed bytes and rejects arrays and invalid UTF-8', async () => {
   await assert.rejects(
     readJSON(

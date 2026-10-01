@@ -73,6 +73,18 @@ function fixture(options: ConstructorParameters<typeof ControlStore>[0] = {}) {
     ],
   };
   const store = new ControlStore({ seed, now: () => now, ...options });
+  const report = {
+    instanceId: 'a'.repeat(32),
+    status: 'HEALTHY' as const,
+    activeConnections: 0,
+    activeTunnels: 0,
+    retainedTunnels: 0,
+    activeStreams: 0,
+    maxConnections: 128,
+    maxTunnels: 1024,
+    maxStreams: 32,
+  };
+  let lease = store.presence.register('rel_a', report);
   const app = createApp(store);
   const call = async (
     path: string,
@@ -113,6 +125,13 @@ function fixture(options: ConstructorParameters<typeof ControlStore>[0] = {}) {
     create,
     advance: (ms: number) => {
       now += ms;
+      lease = store.presence.register('rel_a', report);
+      lease = store.presence.report(
+        'rel_a',
+        report,
+        lease.leaseId,
+        lease.sequence + 1,
+      );
     },
   };
 }
@@ -647,3 +666,203 @@ test(
     }
   },
 );
+
+test('relay reports and operator drain policy enforce node scope and cannot resurrect disabled assignments', async () => {
+  const f = fixture();
+  const base = {
+    instanceId: 'a'.repeat(32),
+    status: 'HEALTHY',
+    activeConnections: 0,
+    activeTunnels: 0,
+    retainedTunnels: 0,
+    activeStreams: 0,
+    maxConnections: 128,
+    maxTunnels: 1024,
+    maxStreams: 32,
+  };
+  assert.equal(
+    (await f.call('/internal/relays/rel_a/register', 'POST', base, owner)).r
+      .status,
+    401,
+  );
+  assert.equal(
+    (
+      await f.call(
+        '/internal/relays/rel_other/register',
+        'POST',
+        base,
+        relayToken,
+      )
+    ).r.status,
+    403,
+  );
+  const registered = await f.call(
+    '/internal/relays/rel_a/register',
+    'POST',
+    base,
+    relayToken,
+  );
+  assert.equal(registered.r.status, 200);
+  const ack = registered.value.data;
+  assert.equal(
+    (
+      await f.call(
+        '/internal/relays/rel_a/report',
+        'POST',
+        { ...base, leaseId: ack.leaseId, sequence: 1 },
+        relayToken,
+      )
+    ).r.status,
+    200,
+  );
+  assert.equal(
+    (
+      await f.call(
+        '/internal/relays/rel_a/report',
+        'POST',
+        { ...base, status: 'DEGRADED', leaseId: ack.leaseId, sequence: 1 },
+        relayToken,
+      )
+    ).r.status,
+    409,
+  );
+  assert.equal(
+    (
+      await f.call(
+        '/internal/relays/rel_a/report',
+        'POST',
+        {
+          ...base,
+          hostname: 'attacker.example.test',
+          leaseId: ack.leaseId,
+          sequence: 2,
+        },
+        relayToken,
+      )
+    ).r.status,
+    400,
+  );
+  const tunnel = await f.create();
+  const before = f.store.tunnels.get(tunnel.id)!.generation;
+  assert.equal(
+    (await f.call('/internal/relays/rel_a/drain', 'POST', undefined, owner)).r
+      .status,
+    401,
+  );
+  assert.equal(
+    (
+      await f.call(
+        '/internal/relays/rel_a/drain',
+        'POST',
+        undefined,
+        relayToken,
+      )
+    ).r.status,
+    200,
+  );
+  const refresh = await f.call(
+    '/internal/relays/rel_a/report',
+    'POST',
+    { ...base, leaseId: ack.leaseId, sequence: 2 },
+    relayToken,
+  );
+  assert.equal(refresh.value.data.drainRequested, true);
+  assert.equal(
+    (await f.call('/tunnels/' + tunnel.id + '/connect', 'POST')).value.error
+      .code,
+    'RELAY_UNAVAILABLE',
+  );
+  assert.equal(f.store.tunnels.get(tunnel.id)!.generation, before);
+  assert.equal(
+    (
+      await f.call(
+        '/internal/relays/rel_a/activate',
+        'POST',
+        undefined,
+        relayToken,
+      )
+    ).r.status,
+    200,
+  );
+  assert.equal(
+    (await f.call('/tunnels/' + tunnel.id + '/connect', 'POST')).r.status,
+    200,
+  );
+});
+
+test('renewal reuses its reservation while new tunnels and saturated local sockets remain excluded', async () => {
+  const f = fixture();
+  const report = {
+    instanceId: 'a'.repeat(32),
+    status: 'HEALTHY',
+    activeConnections: 0,
+    activeTunnels: 0,
+    retainedTunnels: 0,
+    activeStreams: 0,
+    maxConnections: 1,
+    maxTunnels: 4,
+    maxStreams: 32,
+  };
+  const registered = await f.call(
+    '/internal/relays/rel_a/register',
+    'POST',
+    report,
+    relayToken,
+  );
+  const leaseId = registered.value.data.leaseId;
+  assert.equal(
+    (
+      await f.call(
+        '/internal/relays/rel_a/report',
+        'POST',
+        { ...report, leaseId, sequence: 1 },
+        relayToken,
+      )
+    ).r.status,
+    200,
+  );
+  const first = await f.create(),
+    second = await f.create();
+  const assigned = await f.call('/tunnels/' + first.id + '/connect', 'POST');
+  assert.equal(assigned.r.status, 200);
+  assert.equal(
+    (await f.call('/tunnels/' + second.id + '/connect', 'POST')).r.status,
+    503,
+  );
+  const renewed = await f.call('/tunnels/' + first.id + '/connect', 'POST');
+  assert.equal(renewed.r.status, 200);
+  assert.equal(renewed.value.data.relay.id, assigned.value.data.relay.id);
+  assert.ok(
+    BigInt(renewed.value.data.generation) >
+      BigInt(assigned.value.data.generation),
+  );
+  assert.equal(
+    (await f.call('/tunnels/' + second.id + '/connect', 'POST')).r.status,
+    503,
+  );
+  assert.equal(f.store.tunnels.get(second.id)!.generation, '0');
+  assert.equal(
+    (
+      await f.call(
+        '/internal/relays/rel_a/report',
+        'POST',
+        {
+          ...report,
+          activeConnections: 1,
+          activeTunnels: 1,
+          retainedTunnels: 1,
+          leaseId,
+          sequence: 2,
+        },
+        relayToken,
+      )
+    ).r.status,
+    200,
+  );
+  const saturated = await f.call('/tunnels/' + first.id + '/connect', 'POST');
+  assert.equal(saturated.r.status, 503);
+  assert.equal(
+    f.store.tunnels.get(first.id)!.generation,
+    renewed.value.data.generation,
+  );
+});

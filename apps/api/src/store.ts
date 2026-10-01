@@ -1,3 +1,12 @@
+import {
+  MemoryPresence,
+  choose,
+  effective,
+  parseReport,
+  incarnation,
+  sequence,
+  acknowledgement,
+} from './presence.ts';
 import type { Awaitable, MutationResult, TunnelFilters } from './backend.ts';
 import { isIP } from 'node:net';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
@@ -65,13 +74,14 @@ export type Limits = {
 export type Audit = {
   action: string;
   resourceId: string;
-  organizationId: string;
-  userId: string;
+  organizationId: string | null;
+  userId: string | null;
   createdAt: string;
 };
 
 export class ControlStore {
   readonly storage = 'memory' as const;
+  readonly presence: MemoryPresence;
   private pending = Promise.resolve();
   private waiting = 0;
   readonly users = new Map<string, User>();
@@ -95,6 +105,7 @@ export class ControlStore {
   constructor(
     options: {
       seed?: Seed;
+      presence?: MemoryPresence;
       baseDomain?: string;
       credentialTTL?: number;
       now?: () => number;
@@ -102,6 +113,7 @@ export class ControlStore {
     } = {},
   ) {
     this.now = options.now ?? Date.now;
+    this.presence = options.presence ?? new MemoryPresence(this.now);
     this.baseDomain = hostname(options.baseDomain ?? 'portway.localhost');
     if (
       this.baseDomain.length > 218 ||
@@ -323,7 +335,7 @@ export class ControlStore {
       role: p.role,
     };
   }
-  relayAccess(bearer: string) {
+  relayAccess(bearer: string, relayId?: string) {
     const key = this.relayKeys.get(digest(bearer));
     if (!key)
       throw new ApiFailure(401, 'AUTH_INVALID', 'Relay authentication failed');
@@ -331,6 +343,48 @@ export class ControlStore {
       throw new ApiFailure(401, 'AUTH_REVOKED', 'Relay authentication revoked');
     if (timestamp(key.expiresAt) <= this.now())
       throw new ApiFailure(401, 'AUTH_EXPIRED', 'Relay authentication expired');
+    if (relayId !== undefined && key.relayId !== relayId)
+      throw new ApiFailure(403, 'FORBIDDEN', 'Relay access denied');
+  }
+  relayReport(
+    bearer: string,
+    relayId: string,
+    body: Record<string, unknown>,
+    update: boolean,
+  ) {
+    this.relayAccess(bearer, relayId);
+    const relay = this.relays.get(relayId);
+    if (!relay) throw new ApiFailure(404, 'RELAY_NOT_FOUND', 'Relay not found');
+    const report = parseReport(body, update);
+    const value = update
+      ? this.presence.report(
+          relayId,
+          report,
+          incarnation(body.leaseId),
+          sequence(body.sequence),
+        )
+      : this.presence.register(relayId, report);
+    return acknowledgement(value, relay.status === 'DRAINING');
+  }
+  relayPolicy(bearer: string, relayId: string, drain: boolean) {
+    this.relayAccess(bearer, relayId);
+    const relay = this.relays.get(relayId);
+    if (!relay) throw new ApiFailure(404, 'RELAY_NOT_FOUND', 'Relay not found');
+    const status = drain ? 'DRAINING' : 'HEALTHY';
+    if (relay.status !== status) {
+      relay.status = status;
+      if (this.audit.length >= this.limits.audit) this.audit.shift();
+      this.audit.push({
+        action: drain ? 'relay.drain' : 'relay.activate',
+        resourceId: relayId,
+        organizationId: null,
+        userId: null,
+        createdAt: this.iso(),
+      });
+    }
+    return {
+      relay: effective(relay, this.presence.get([relayId]).get(relayId)),
+    };
   }
   listProjects(p: Principal, cursor: string | undefined, limit: number) {
     return this.page(
@@ -387,7 +441,8 @@ export class ControlStore {
       ) &&
       [...this.relays.values()].some(
         (r) =>
-          r.status === 'HEALTHY' &&
+          effective(r, this.presence.get([r.id]).get(r.id)).status ===
+            'HEALTHY' &&
           [...this.relayKeys.values()].some(
             (k) =>
               k.relayId === r.id &&
@@ -486,7 +541,7 @@ export class ControlStore {
   relay(relayId: string) {
     const relay = this.relays.get(relayId);
     if (!relay) throw new ApiFailure(404, 'RELAY_NOT_FOUND', 'Relay not found');
-    return relay;
+    return effective(relay, this.presence.get([relayId]).get(relayId));
   }
   login(raw: string) {
     token(raw);
@@ -620,23 +675,46 @@ export class ControlStore {
   ): Assignment {
     const tunnel = this.tunnel(p, tunnelId);
     this.mutate(p);
-    fields(body, ['minimumGeneration']);
+    fields(body, ['minimumGeneration', 'avoidRelayId']);
+    const avoid =
+      body.avoidRelayId === undefined ? undefined : id(body.avoidRelayId);
     const minimum =
       body.minimumGeneration === undefined
         ? 1n
         : BigInt(generation(body.minimumGeneration));
     if (tunnel.status === 'REVOKED')
       throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
-    const relay = [...this.relays.values()].find(
-      (r) =>
-        r.status === 'HEALTHY' &&
-        r.protocol === 'tls' &&
-        [...this.relayKeys.values()].some(
-          (k) =>
-            k.relayId === r.id &&
-            !k.revokedAt &&
-            timestamp(k.expiresAt) > this.now(),
-        ),
+    const candidates = [...this.relays.values()].filter((r) =>
+      [...this.relayKeys.values()].some(
+        (k) =>
+          k.relayId === r.id &&
+          !k.revokedAt &&
+          timestamp(k.expiresAt) > this.now(),
+      ),
+    );
+    const reserved = new Map<string, Set<string>>();
+    for (const c of this.credentials.values()) {
+      const t = this.tunnels.get(c.tunnelId);
+      if (
+        !c.revokedAt &&
+        timestamp(c.expiresAt) > this.now() &&
+        t &&
+        t.status !== 'REVOKED' &&
+        t.id !== tunnelId &&
+        t.generation === c.generation &&
+        t.relayId === c.relayId
+      ) {
+        const ids = reserved.get(c.relayId) ?? new Set<string>();
+        ids.add(c.tunnelId);
+        reserved.set(c.relayId, ids);
+      }
+    }
+    const relay = choose(
+      candidates,
+      this.presence.get(candidates.map((r) => r.id)),
+      new Map([...reserved].map(([k, v]) => [k, v.size])),
+      tunnel.relayId,
+      avoid,
     );
     if (!relay)
       throw new ApiFailure(503, 'RELAY_UNAVAILABLE', 'Relay unavailable');
@@ -768,11 +846,11 @@ export class ControlStore {
     for (const [k, v] of this.buckets)
       if (v.start + 60_000 <= now) this.buckets.delete(k);
   }
-  rate(key: string) {
+  rate(key: string, limit = 120) {
     const now = this.now();
     const old = this.buckets.get(key);
     if (old && old.start + 60_000 > now) {
-      if (++old.count > 120)
+      if (++old.count > limit)
         throw new ApiFailure(429, 'RATE_LIMITED', 'Request rate exceeded');
       return;
     }

@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–10 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. The dashboard remains a skeleton.
+Phases 0–11 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. The dashboard remains a skeleton.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -141,7 +141,7 @@ pnpm db:validate
 pnpm test:bootstrap
 ```
 
-`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, production builds, and real API/CLI/relay tests in memory and PostgreSQL modes. PostgreSQL integration uses isolated temporary Docker containers to verify migrations, constraints, concurrent writes, rollback, seed safety and outage isolation. Docker must be available. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, stream/window payloads, and WebSocket response headers for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
+`make check` verifies Go/Prettier formatting, Go and TypeScript tests, Go race detection, Go vet, ESLint, TypeScript types, production builds, and real API/CLI/relay tests in memory and PostgreSQL modes, plus two-relay failover and Redis presence tests. PostgreSQL integration uses isolated temporary Docker containers to verify migrations, constraints, concurrent writes, rollback, seed safety and outage isolation. Docker must be available. `make fuzz` actively fuzzes decoding, encoding round trips, handshake payloads, stream/window payloads, and WebSocket response headers for 10 seconds each (override with `FUZZTIME=30s`). CI also runs each target for 5 seconds. `pnpm test:bootstrap` requires Docker and checks real development startup, duplicate-start rejection, and interrupt cleanup. Run it when no other Portway development session is using the Compose project.
 
 Stop the development stack before running production builds; Next.js uses the same `.next/` directory for both.
 
@@ -221,10 +221,55 @@ revocations survive API restarts. Database failures return `503 STORAGE_UNAVAILA
 Admitted public traffic continues until its lease expires even during database
 outages. Rate buckets and cursor signing keys remain process-local; cursors expire
 on API restart and cannot move between instances. `CONNECTING` represents issuance,
-not confirmed live presence. Dynamic relay health/selection and failover are Phase 11.
+not confirmed live presence. Live Redis reports now drive relay health/capacity selection and failover.
 
 Explicit `API_STORAGE=memory` retains the bounded Phase 9 test/development backend;
 its mutations disappear on restart. `pnpm test:control` exercises that backend.
 `pnpm test:database` checks PostgreSQL contracts, and `pnpm test:database-control`
 tests actual API/CLI/relay restart, database outage isolation and durable revocation
 after `make build`. See [Phase 10](./docs/PHASE_10.md) for verification and boundaries.
+
+## Relay fleet (Phase 11)
+
+Each node has an operator-provisioned `Relay` row and its own relay-scoped hashed
+API key. Configured endpoint metadata stays in PostgreSQL; nodes cannot register
+arbitrary destinations. Control-mode relays automatically report through their
+`RELAY_API_URL`, token file and relay ID. Reports run every 2s by default
+(`RELAY_API_REPORT_INTERVAL`, 100ms–5s) and expire after 15s. Redis is required for
+the PostgreSQL backend, with finite connection and complete round-trip deadlines.
+No fresh report means OFFLINE; seed status alone cannot admit a new assignment.
+
+`make dev` starts reporting independently of credential verification, preserving
+private-file diagnostics. Standalone file-mode nodes can set
+`RELAY_REPORT_API_URL`, `RELAY_REPORT_API_TOKEN_FILE`, `RELAY_REPORT_API_CA_FILE`
+and `RELAY_REPORT_ID`; these default to the verification API settings. Reporting
+does not change the private-file authenticator. Every relay uses a distinct ID/key.
+Existing seed/database relay ports must match the configured node listener.
+
+The selector uses live health, durable policy, observed capacity and current
+credential reservations. It keeps a usable assigned node and prefers another
+healthy node after retryable transport failure. New sessions use higher durable
+generations and new credentials. Interrupted application requests fail without
+replay. Existing admitted HTTPS/WebSocket/SSE continue through API/database/Redis
+outages until their local lease expires or transport fails.
+
+Use relay-key-authenticated `POST /api/v1/internal/relays/:id/drain` to persist
+operator drain policy. The reporter observes the command and the node stops
+admission, lets active streams finish and exits within its shutdown deadline.
+`/activate` clears durable policy; restart the drained process to resume. User
+organization keys cannot operate the shared fleet. Ordinary process shutdown
+publishes temporary DRAINING state without disabling the durable node identity.
+A fresh process can replace a DRAINING report; replacing a live HEALTHY process
+with the same ID requires its report to expire, preventing competing reporters.
+
+The hostname stays stable across failover. Local nodes use separate public ports,
+so use the latest emitted URL. Production needs ingress/DNS that follows the
+assigned relay for each hostname. A random load balancer across nodes cannot
+find another node's local mux; this phase does not install an ingress controller
+or introduce relay-to-relay application proxying. Capacity snapshots are advisory
+and local socket/stream/registry limits remain authoritative.
+
+`pnpm test:fleet-api` verifies policy and fencing across real Redis/PostgreSQL API
+instances. `pnpm test:fleet` checks actual two-node graceful drain, Redis outage
+isolation, fresh-report transport failover, increasing generations and no replay.
+Both run in `make check` and CI. See [Phase 11](./docs/PHASE_11.md).

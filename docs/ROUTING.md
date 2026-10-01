@@ -690,3 +690,22 @@ Control-mode port invocations bootstrap again after lease expiry or transport
 loss, obtaining a new credential and a strictly higher persisted generation.
 Interrupted application streams are canceled without replay. Direct development
 file credentials retain their earlier expiry/registration semantics.
+
+## 32. Phase 11 relay failover boundary
+
+Control bootstrap selects only an enabled node with a fresh HEALTHY capacity
+report. Every new session obtains a relay-bound credential and a higher generation.
+Transport retries prefer another eligible node even before the failed node's
+report expires; stale or draining nodes cannot receive new assignments. Direct
+private-file mode retains single-relay behavior. Node report failures do not
+interrupt admitted application bytes before their local lease expires.
+
+Graceful node drain uses the existing GOAWAY/DRAINED path and finite deadline;
+control-plane drain state excludes the node while admitted streams finish. On
+crash, interrupted requests fail, local sockets close, and the port invocation
+reconnects through the control API. Superseded credentials cannot pass new AUTH.
+The hostname is stable and the new REGISTER_OK verifies that node's public port.
+Operator ingress/DNS must route public traffic to the assigned relay. Randomly
+balancing a hostname across nodes without an assignment-aware ingress is unsupported;
+no application-byte relay-to-relay proxy is introduced. Local E2E clients follow
+the newly emitted URL after recovery; production uses its normal ingress port.

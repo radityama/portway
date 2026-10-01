@@ -362,6 +362,16 @@ Implement:
 
 The control plane should stop assigning a relay when it is degraded past configured limits.
 
+Phase 11 implements relay-key-authenticated registration, fenced 15s Redis presence,
+health/capacity snapshots, durable operator drain/activation and capacity-aware
+sticky assignment with alternative preference after transport failure. One bounded
+reporter per node publishes local counters and observes drain commands. CLI recovery
+uses another eligible node and higher generations without request replay. Real
+Redis/PostgreSQL and two-relay E2E cover outages, report expiry/replacement,
+concurrent capacity, graceful drain and failover. Public ingress/DNS must follow the
+assigned node; application proxying across relays is not introduced. See
+[PHASE_11.md](./PHASE_11.md).
+
 ## 16. Phase 12 — Domains and TLS
 
 Implement:

@@ -79,7 +79,8 @@ upgraded connections. Compression, generic upgrades, HTTP/2 and trailers remain
 unsupported. See [PHASE_8.md](./PHASE_8.md).
 
 Phases 9–10 add the scoped control API and durable PostgreSQL policy described
-below. The next phase is Phase 11: live relay health, capacity and selection.
+below. Phase 11 adds live relay health, capacity and selection below. The next phase
+is Phase 12: domains and TLS management.
 
 ## What this starter contains
 
@@ -141,3 +142,16 @@ outages preserve admitted HTTPS/SSE until lease expiry, and restart retains
 revocations. Cursor keys/rate limits remain process-local, writer serialization is
 an initial throughput boundary, and live relay presence remains Phase 11. See
 [PHASE_10.md](./PHASE_10.md).
+
+## Phase 11
+
+Relay-scoped keys register and update live capacity/health in expiring Redis state.
+Incarnation/sequence fencing prevents stale report updates; durable operator policy
+persists drain/activation and operator audit metadata. Selection requires fresh
+HEALTHY capacity with outstanding credential admission counted transactionally.
+The CLI prefers an alternative after retryable transport failure and reconnects
+with a higher generation. Graceful drain and API/database/Redis failure isolation
+reuse the existing local mux and leases. Real two-relay E2E verifies SSE completion,
+crash recovery and no replay. Production ingress/DNS must follow the assigned relay;
+cross-node application proxying and ingress-controller installation remain outside
+this phase. See [PHASE_11.md](./PHASE_11.md).

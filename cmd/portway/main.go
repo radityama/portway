@@ -139,6 +139,8 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 	}
 	explicitGeneration := cfg.Generation
 	var backoff agent.Backoff
+	lastRelayID := ""
+	avoidRelayID := ""
 	for {
 		var connectedAt time.Time
 		connectionID := ""
@@ -164,7 +166,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 				if err != nil {
 					return errCredentialFile
 				}
-				assignment, err := api.Connect(life, cfg.TunnelID, generation, bearer)
+				assignment, err := api.ConnectAvoid(life, cfg.TunnelID, generation, bearer, avoidRelayID)
 				bearer = ""
 				if err != nil {
 					return err
@@ -174,6 +176,7 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 						return errGenerationState
 					}
 				}
+				lastRelayID = assignment.Relay.ID
 				generation = assignment.Generation
 				assignedHostname = assignment.PublicHostname
 				assignedExpiry = assignment.Credential.ExpiresAt
@@ -294,6 +297,9 @@ func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr i
 				emit(Event{Event: "shutdown_complete"})
 			}
 			return 0
+		}
+		if controlMode && agent.Retryable(attemptErr) {
+			avoidRelayID = lastRelayID
 		}
 		if port == 0 || !(agent.Retryable(attemptErr) || control.Retryable(attemptErr)) {
 			var controlFailure *control.Error

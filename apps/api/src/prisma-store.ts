@@ -1,3 +1,12 @@
+import {
+  choose,
+  effective,
+  parseReport,
+  incarnation,
+  sequence,
+  acknowledgement,
+  type PresenceStore,
+} from './presence.ts';
 import { Prisma } from '@prisma/client';
 import type {
   ApiKey as DbKey,
@@ -78,20 +87,23 @@ export class PrismaStore implements ControlBackend {
   private readonly guard: ControlStore;
   private readonly cursors: CursorCodec;
   readonly database: Database;
+  readonly presence: PresenceStore;
   constructor(
     database: Database,
+    presence: PresenceStore,
     options: ConstructorParameters<typeof ControlStore>[0] = {},
   ) {
     if (options.seed) throw new Error('Database provisioning must be explicit');
     this.database = database;
+    this.presence = presence;
     this.guard = new ControlStore(options);
     this.cursors = new CursorCodec(this.guard.now);
   }
   private now() {
     return this.guard.now();
   }
-  rate(key: string) {
-    this.guard.rate(key);
+  rate(key: string, limit = 120) {
+    this.guard.rate(key, limit);
   }
   private async identity(tx: Transaction, hash: string): Promise<Principal> {
     const session = await tx.apiSession.findUnique({
@@ -210,7 +222,7 @@ export class PrismaStore implements ControlBackend {
       await this.check(tx, p, true, admin);
     });
   }
-  relayAccess(bearer: string) {
+  relayAccess(bearer: string, relayId?: string) {
     return this.database.work(false, async (tx) => {
       const key = keyPolicy(
         await tx.apiKey.findUnique({ where: { tokenHash: digest(bearer) } }),
@@ -222,7 +234,90 @@ export class PrismaStore implements ControlBackend {
           'AUTH_INVALID',
           'Relay authentication failed',
         );
+      if (relayId !== undefined && key.relayId !== relayId)
+        throw new ApiFailure(403, 'FORBIDDEN', 'Relay access denied');
     });
+  }
+  relayReport(
+    bearer: string,
+    relayId: string,
+    body: Record<string, unknown>,
+    update: boolean,
+  ) {
+    const report = parseReport(body, update);
+    return this.database.work(false, async (tx) => {
+      await this.relayAccess(bearer, relayId);
+      const relay = await tx.relay.findUnique({ where: { id: relayId } });
+      if (!relay)
+        throw new ApiFailure(404, 'RELAY_NOT_FOUND', 'Relay not found');
+      const value = update
+        ? await this.presence.report(
+            relayId,
+            report,
+            incarnation(body.leaseId),
+            sequence(body.sequence),
+          )
+        : await this.presence.register(relayId, report);
+      return acknowledgement(value, relay.status === 'DRAINING');
+    });
+  }
+  relayPolicy(bearer: string, relayId: string, drain: boolean) {
+    return this.database.work(true, async (tx) => {
+      await this.relayAccess(bearer, relayId);
+      const old = await tx.relay.findUnique({ where: { id: relayId } });
+      if (!old) throw new ApiFailure(404, 'RELAY_NOT_FOUND', 'Relay not found');
+      const status = drain ? 'DRAINING' : 'HEALTHY';
+      let relay = old;
+      if (old.status !== status) {
+        relay = await tx.relay.update({
+          where: { id: relayId },
+          data: { status },
+        });
+        await tx.auditLog.create({
+          data: {
+            id: opaque('aud'),
+            action: drain ? 'relay.drain' : 'relay.activate',
+            resourceType: 'relay',
+            resourceId: relayId,
+            metadata: {
+              apiKeyId: (
+                await tx.apiKey.findUniqueOrThrow({
+                  where: { tokenHash: digest(bearer) },
+                  select: { id: true },
+                })
+              ).id,
+            },
+          },
+        });
+      }
+      return {
+        relay: effective(
+          relayDto(relay),
+          (await this.presence.get([relayId])).get(relayId),
+        ),
+      };
+    });
+  }
+  private async candidates(tx: Transaction) {
+    return (
+      await tx.relay.findMany({
+        where: {
+          status: 'HEALTHY',
+          protocol: 'tls',
+          apiKeys: {
+            some: {
+              revokedAt: null,
+              OR: [
+                { expiresAt: null },
+                { expiresAt: { gt: new Date(this.now()) } },
+              ],
+            },
+          },
+        },
+        orderBy: { id: 'asc' },
+        take: 4096,
+      })
+    ).map(relayDto);
   }
   ready() {
     return this.database.work(false, async (tx) => {
@@ -239,7 +334,12 @@ export class PrismaStore implements ControlBackend {
     WHERE r.status='HEALTHY' AND r.protocol='tls' AND k."revokedAt" IS NULL
      AND (k."expiresAt" IS NULL OR k."expiresAt">${now})
    ) AS ready`;
-      return result?.ready ?? false;
+      if (!result?.ready) return false;
+      const relays = await this.candidates(tx),
+        live = await this.presence.get(relays.map((r) => r.id));
+      return relays.some(
+        (r) => effective(r, live.get(r.id)).status === 'HEALTHY',
+      );
     });
   }
   profile(p: Principal) {
@@ -324,7 +424,10 @@ export class PrismaStore implements ControlBackend {
     return this.database.work(false, async (tx) => {
       const r = await tx.relay.findUnique({ where: { id: relayId } });
       if (!r) throw new ApiFailure(404, 'RELAY_NOT_FOUND', 'Relay not found');
-      return relayDto(r);
+      return effective(
+        relayDto(r),
+        (await this.presence.get([relayId])).get(relayId),
+      );
     });
   }
   listProjects(p: Principal, cursor: string | undefined, limit: number) {
@@ -418,7 +521,12 @@ export class PrismaStore implements ControlBackend {
         orderBy: { id: 'asc' },
         take: limit + 1,
       });
-      const items = rows.slice(0, limit).map(relayDto);
+      const live = await this.presence.get(
+        rows.slice(0, limit).map((r) => r.id),
+      );
+      const items = rows
+        .slice(0, limit)
+        .map((r) => effective(relayDto(r), live.get(r.id)));
       return {
         items,
         nextCursor:
@@ -555,7 +663,9 @@ export class PrismaStore implements ControlBackend {
     return this.database.work(true, async (tx) => {
       const fresh = await this.check(tx, p, true),
         tunnel = await this.scopedTunnel(tx, p, tunnelId);
-      fields(body, ['minimumGeneration']);
+      fields(body, ['minimumGeneration', 'avoidRelayId']);
+      const avoid =
+        body.avoidRelayId === undefined ? undefined : id(body.avoidRelayId);
       const minimum =
         body.minimumGeneration === undefined
           ? 1n
@@ -563,19 +673,18 @@ export class PrismaStore implements ControlBackend {
       if (tunnel.status === 'REVOKED')
         throw new ApiFailure(409, 'TUNNEL_REVOKED', 'Tunnel revoked');
       const now = new Date(this.now());
-      const relay = await tx.relay.findFirst({
-        where: {
-          status: 'HEALTHY',
-          protocol: 'tls',
-          apiKeys: {
-            some: {
-              revokedAt: null,
-              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-            },
-          },
-        },
-        orderBy: { id: 'asc' },
-      });
+      const candidates = await this.candidates(tx);
+      const counts = await tx.$queryRaw<{ relayId: string; count: number }[]>`
+        SELECT t."relayId",count(DISTINCT t.id)::int AS count FROM "Tunnel" t
+        JOIN "TunnelCredential" c ON c."tunnelId"=t.id AND c.generation=t.generation AND c."relayId"=t."relayId"
+        WHERE t.status<>'REVOKED' AND t.id<>${tunnelId} AND c."revokedAt" IS NULL AND c."expiresAt">${now} GROUP BY t."relayId"`;
+      const relay = choose(
+        candidates,
+        await this.presence.get(candidates.map((r) => r.id)),
+        new Map(counts.map((c) => [c.relayId, c.count])),
+        tunnel.relayId,
+        avoid,
+      );
       if (!relay)
         throw new ApiFailure(503, 'RELAY_UNAVAILABLE', 'Relay unavailable');
       const next = BigInt(tunnel.generation.toFixed(0)) + 1n,
@@ -644,7 +753,7 @@ export class PrismaStore implements ControlBackend {
       });
       await this.audit(tx, p, 'tunnel.connect', 'tunnel', tunnelId);
       return {
-        relay: relayDto(relay),
+        relay,
         credential: {
           id: credential.id,
           tunnelId,

@@ -575,3 +575,21 @@ unavailable. Expired sessions must bootstrap again; revoked policy blocks future
 admission across API restarts. Public HTTP/WebSocket/SSE have no database/API query.
 Durable issuance remains CONNECTING metadata; live relay reporting, selection,
 drain coordination and failover are Phase 11. See PHASE_10.md and DATABASE.md.
+
+## 27. Phase 11 fleet coordination
+
+Operator-provisioned PostgreSQL relay identities and relay-scoped keys are the
+trust boundary. A control-mode relay owns one reporting worker with bounded
+HTTPS calls, samples local connections/tunnels/streams and publishes expiring
+Redis presence via the API. Incarnation and sequence fencing reject late updates
+from a replaced node. Redis outage or missed reports closes assignment eligibility,
+while existing public forwarding uses its local bounded lease.
+
+Selection uses fresh health, configured policy and observed/reserved capacity,
+with sticky usable assignments and alternative preference after transport failure.
+Drain commands persist operator policy, exclude new assignments and use the
+existing local graceful shutdown. CLI recovery reauthenticates at another node
+with a higher durable generation. No failed application stream migrates or replays.
+Deployment ingress/DNS must follow the assigned relay for each stable hostname;
+cross-node application proxying and ingress-controller installation are outside
+this phase. There is no per-public-request API/PostgreSQL/Redis query.

@@ -6,9 +6,11 @@ import { ControlStore } from './store.ts';
 import { loadSeed } from './seed.ts';
 import { Database, databaseClient } from './database.ts';
 import { PrismaStore } from './prisma-store.ts';
+import { RedisPresence } from './presence.ts';
 
 let app: ReturnType<typeof createApp>;
 let database: Database | undefined;
+let presence: RedisPresence | undefined;
 try {
   const options = {
     baseDomain: env.publicBaseDomain,
@@ -16,7 +18,8 @@ try {
   };
   if (env.storage === 'postgres') {
     database = new Database(databaseClient(env.databaseUrl));
-    app = createApp(new PrismaStore(database, options));
+    presence = new RedisPresence(env.redisUrl);
+    app = createApp(new PrismaStore(database, presence, options));
   } else
     app = createApp(
       new ControlStore({ ...options, seed: loadSeed(env.seedFile) }),
@@ -49,6 +52,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     server.close(() => {
       void (async () => {
         try {
+          await presence?.close();
           await database?.close();
           clearTimeout(deadline);
           process.exit(0);

@@ -124,7 +124,12 @@ export function createApp(store: ControlBackend = new ControlStore()) {
     try {
       const env = c.env as
         { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
-      store.rate('ip:' + (env?.incoming?.socket?.remoteAddress ?? 'local'));
+      const relayReport = c.req.path.startsWith('/api/v1/internal/relays/');
+      store.rate(
+        (relayReport ? 'relay-ip:' : 'ip:') +
+          (env?.incoming?.socket?.remoteAddress ?? 'local'),
+        relayReport ? 4096 : 120,
+      );
       await next();
     } finally {
       active--;
@@ -133,6 +138,8 @@ export function createApp(store: ControlBackend = new ControlStore()) {
   app.use('/api/v1/*', async (c, next) => {
     if (
       (c.req.path === '/api/v1/auth/login' && c.req.method === 'POST') ||
+      (c.req.path.startsWith('/api/v1/internal/relays/') &&
+        c.req.method === 'POST') ||
       (c.req.path === '/api/v1/internal/credentials/verify' &&
         c.req.method === 'POST')
     ) {
@@ -370,7 +377,8 @@ export function createApp(store: ControlBackend = new ControlStore()) {
   app.post('/api/v1/tunnels/:id/connect', async (c) => {
     query(c.req.url, []);
     const b = await body(c.req.raw, true);
-    fields(b.value, ['minimumGeneration']);
+    fields(b.value, ['minimumGeneration', 'avoidRelayId']);
+    if (b.value.avoidRelayId !== undefined) id(b.value.avoidRelayId);
     if (b.value.minimumGeneration !== undefined)
       generation(b.value.minimumGeneration);
     const p = c.get('principal'),
@@ -415,6 +423,30 @@ export function createApp(store: ControlBackend = new ControlStore()) {
       meta: {},
     });
   });
+  for (const action of ['register', 'report', 'drain', 'activate'] as const) {
+    app.post('/api/v1/internal/relays/:relayId/' + action, async (c) => {
+      query(c.req.url, []);
+      const raw = bearer(c.req.header('Authorization')),
+        relayId = id(c.req.param('relayId'));
+      await store.relayAccess(raw, relayId);
+      store.rate('relay-node:' + relayId, 900);
+      const parsed = await body(
+        c.req.raw,
+        action === 'drain' || action === 'activate',
+      );
+      if (action === 'drain' || action === 'activate') fields(parsed.value, []);
+      const data =
+        action === 'drain' || action === 'activate'
+          ? await store.relayPolicy(raw, relayId, action === 'drain')
+          : await store.relayReport(
+              raw,
+              relayId,
+              parsed.value,
+              action === 'report',
+            );
+      return c.json({ data, error: null, meta: {} });
+    });
+  }
   app.post('/api/v1/internal/credentials/verify', async (c) => {
     query(c.req.url, []);
     const relayToken = bearer(c.req.header('Authorization'));

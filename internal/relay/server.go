@@ -48,6 +48,7 @@ type Server struct {
 	hostnames            map[string]string
 	active               map[net.Conn]struct{}
 	draining             bool
+	shutdownStarted      bool
 	httpActive           int
 	httpServers          map[*http.Server]*limitedListener
 	changed              chan struct{}

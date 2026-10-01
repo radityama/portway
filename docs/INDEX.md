@@ -27,6 +27,7 @@
 - [Phase 8](./PHASE_8.md) — WebSocket upgrades, SSE and chunked streaming, idle supervision
 - [Phase 9](./PHASE_9.md) — scoped control API, short-lived relay credentials and CLI bootstrap
 - [Phase 10](./PHASE_10.md) — PostgreSQL durability, migrations, safe provisioning and transaction tests
+- [Phase 11](./PHASE_11.md) — live relay reports, capacity selection, operator draining and agent failover
 
 ## Contract hierarchy
 

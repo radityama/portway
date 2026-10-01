@@ -13,6 +13,8 @@ export async function databaseFixture({ beforeDeploy } = {}) {
   const name = 'portway-database-' + randomBytes(6).toString('hex');
   const directory = mkdtempSync(join(tmpdir(), 'portway-db-'));
   let started = false;
+  const redisName = name + '-redis';
+  let redisStarted = false;
   try {
     await execute(
       'docker',
@@ -66,11 +68,54 @@ export async function databaseFixture({ beforeDeploy } = {}) {
         await delay(100);
       }
     }
+    await execute(
+      'docker',
+      [
+        'run',
+        '--detach',
+        '--rm',
+        '--name',
+        redisName,
+        '-p',
+        '127.0.0.1::6379',
+        process.env.REDIS_IMAGE ?? 'redis:8-alpine',
+        'redis-server',
+        '--save',
+        '',
+        '--appendonly',
+        'no',
+      ],
+      { timeout: 60_000 },
+    );
+    redisStarted = true;
+    const redisPublished = (
+      await execute('docker', ['port', redisName, '6379'], { timeout: 5000 })
+    ).stdout.trim();
+    const redisPort = Number(redisPublished.split(':').at(-1));
+    const redisDeadline = Date.now() + 10_000;
+    while (true) {
+      try {
+        if (
+          (
+            await execute('docker', ['exec', redisName, 'redis-cli', 'ping'], {
+              timeout: 1000,
+            })
+          ).stdout.trim() === 'PONG'
+        )
+          break;
+      } catch {
+        // The owned Redis container may still be starting; retry within the deadline.
+      }
+      if (Date.now() > redisDeadline)
+        throw new Error('Redis fixture readiness failed');
+      await delay(100);
+    }
     initializeControl(directory, { RELAY_PORT: '8081' });
     const privateDir = join(directory, '.tmp/dev');
     const env = {
       ...process.env,
       API_STORAGE: 'postgres',
+      REDIS_URL: `redis://127.0.0.1:${redisPort}`,
       DATABASE_URL: `postgresql://portway:portway@127.0.0.1:${port}/portway?schema=public`,
       API_SEED_FILE: join(privateDir, 'control-seed.json'),
       PUBLIC_BASE_DOMAIN: 'portway.localhost',
@@ -90,6 +135,7 @@ export async function databaseFixture({ beforeDeploy } = {}) {
     });
     return {
       name,
+      redisName,
       directory,
       privateDir,
       env,
@@ -99,6 +145,9 @@ export async function databaseFixture({ beforeDeploy } = {}) {
         'utf8',
       ).trim(),
       async close() {
+        await execute('docker', ['stop', '--time', '2', redisName], {
+          timeout: 10_000,
+        }).catch(() => {});
         await execute('docker', ['stop', '--time', '2', name], {
           timeout: 10_000,
         }).catch(() => {});
@@ -106,6 +155,10 @@ export async function databaseFixture({ beforeDeploy } = {}) {
       },
     };
   } catch (error) {
+    if (redisStarted)
+      await execute('docker', ['stop', '--time', '2', redisName], {
+        timeout: 10_000,
+      }).catch(() => {});
     if (started)
       await execute('docker', ['stop', '--time', '2', name], {
         timeout: 10_000,

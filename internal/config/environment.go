@@ -15,28 +15,30 @@ var ErrEnvironment = errors.New("invalid Portway connection environment")
 type Lookup func(string) (string, bool)
 
 type Relay struct {
-	APIURL, APICAFile, APITokenFile, RelayID string
-	APITimeout                               time.Duration
-	ShutdownTimeout                          time.Duration
-	PublicBaseDomain                         string
-	MaxTunnels                               int
-	RegistrationTimeout                      time.Duration
-	Address                                  string
-	CertFile                                 string
-	KeyFile                                  string
-	CredentialsFile                          string
-	MaxConnections                           int
-	MaxFrame                                 uint32
-	HandshakeTimeout                         time.Duration
-	IdleTimeout                              time.Duration
-	WriteTimeout                             time.Duration
-	PublicAddress                            string
-	PublicPort                               int
-	PublicCertFile                           string
-	PublicKeyFile                            string
-	MaxPublicConnections                     int
-	MaxStreams                               int
-	StreamTimeout                            time.Duration
+	APIURL, APICAFile, APITokenFile, RelayID           string
+	APITimeout                                         time.Duration
+	ReportInterval                                     time.Duration
+	ReportURL, ReportCAFile, ReportTokenFile, ReportID string
+	ShutdownTimeout                                    time.Duration
+	PublicBaseDomain                                   string
+	MaxTunnels                                         int
+	RegistrationTimeout                                time.Duration
+	Address                                            string
+	CertFile                                           string
+	KeyFile                                            string
+	CredentialsFile                                    string
+	MaxConnections                                     int
+	MaxFrame                                           uint32
+	HandshakeTimeout                                   time.Duration
+	IdleTimeout                                        time.Duration
+	WriteTimeout                                       time.Duration
+	PublicAddress                                      string
+	PublicPort                                         int
+	PublicCertFile                                     string
+	PublicKeyFile                                      string
+	MaxPublicConnections                               int
+	MaxStreams                                         int
+	StreamTimeout                                      time.Duration
 }
 
 type Agent struct {
@@ -97,6 +99,17 @@ func RelayEnvironment(env Lookup) (Relay, error) {
 	cfg.RelayID = value(env, "RELAY_ID", "")
 	cfg.APITimeout, err = duration(env, "RELAY_API_TIMEOUT", "5s")
 	if err != nil || cfg.APITimeout > 30*time.Second || (cfg.APIURL == "") != (cfg.APITokenFile == "") || cfg.APITokenFile != "" && !protocol.ValidTunnelID(cfg.RelayID) {
+		return Relay{}, ErrEnvironment
+	}
+	cfg.ReportURL = value(env, "RELAY_REPORT_API_URL", cfg.APIURL)
+	cfg.ReportCAFile = value(env, "RELAY_REPORT_API_CA_FILE", cfg.APICAFile)
+	cfg.ReportTokenFile = value(env, "RELAY_REPORT_API_TOKEN_FILE", cfg.APITokenFile)
+	cfg.ReportID = value(env, "RELAY_REPORT_ID", cfg.RelayID)
+	if (cfg.ReportURL == "") != (cfg.ReportTokenFile == "") || cfg.ReportTokenFile != "" && !protocol.ValidTunnelID(cfg.ReportID) {
+		return Relay{}, ErrEnvironment
+	}
+	cfg.ReportInterval, err = duration(env, "RELAY_API_REPORT_INTERVAL", "2s")
+	if err != nil || cfg.ReportInterval < 100*time.Millisecond || cfg.ReportInterval > 5*time.Second {
 		return Relay{}, ErrEnvironment
 	}
 	cfg.ShutdownTimeout, err = duration(env, "RELAY_SHUTDOWN_TIMEOUT", "10s")

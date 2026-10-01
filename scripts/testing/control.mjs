@@ -12,15 +12,15 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { initializeControl } from '../control-init.mjs';
 import { databaseClient } from '../../apps/api/src/database.ts';
 
-const root = fileURLToPath(new URL('../../', import.meta.url));
-async function freePort() {
+export const root = fileURLToPath(new URL('../../', import.meta.url));
+export async function freePort() {
   const s = tcpServer();
   await new Promise((r) => s.listen(0, '127.0.0.1', r));
   const p = s.address().port;
   await new Promise((r) => s.close(r));
   return p;
 }
-function start(command, args, env) {
+export function start(command, args, env) {
   const child = spawn(command, args, {
     cwd: root,
     env,
@@ -40,7 +40,7 @@ function start(command, args, env) {
   });
   return { child, completion, output: () => output, closed: () => closed };
 }
-async function stop(process) {
+export async function stop(process) {
   if (!process || process.closed()) return;
   process.child.kill('SIGTERM');
   const deadline = setTimeout(() => process.child.kill('SIGKILL'), 6000);
@@ -50,14 +50,14 @@ async function stop(process) {
     clearTimeout(deadline);
   }
 }
-async function until(predicate, ms = 12_000) {
+export async function until(predicate, ms = 12_000) {
   const deadline = Date.now() + ms;
   while (!(await predicate())) {
     assert.ok(Date.now() < deadline, 'Integration readiness deadline exceeded');
     await delay(30);
   }
 }
-function publicGet(url, ca) {
+export function publicGet(url, ca, onData = () => {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const req = request(
@@ -75,6 +75,7 @@ function publicGet(url, ca) {
         const pieces = [];
         let size = 0;
         res.on('data', (b) => {
+          onData(b);
           size += b.length;
           if (size > 65536) req.destroy(new Error('Response limit'));
           else pieces.push(b);
@@ -152,14 +153,18 @@ export async function runControlScenario(database) {
     processes.push(api);
     await until(async () => {
       try {
-        return (await fetch(base.replace('/api/v1', '/ready'))).status === 200;
+        return (await fetch(base.replace('/api/v1', '/health'))).status === 200;
       } catch {
         return false;
       }
     });
     const relay = start(join(root, 'bin/portway-relay'), [], env);
     processes.push(relay);
-    await until(() => relay.output().includes('relay_listening'));
+    await until(() => relay.output().includes('relay_presence_registered'));
+    await until(
+      async () =>
+        (await fetch(base.replace('/api/v1', '/ready'))).status === 200,
+    );
     let upstreamHits = 0;
     upstream = createServer((req, res) => {
       upstreamHits++;

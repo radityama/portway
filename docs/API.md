@@ -577,3 +577,70 @@ Rerunning the seed does not undo revocation, overwrite generations or resurrect
 terminal tunnels. Database migration and seeding happen before development API
 startup. Public HTTP/WebSocket/SSE continue using the relay's existing local lease
 and are independent of database availability until expiry/failure/shutdown.
+
+## 18. Phase 11 relay registration, health and failover
+
+Control-mode assignments require fresh HEALTHY Redis presence, usable relay keys,
+enabled durable policy and capacity headroom. Seeded health alone is insufficient.
+GET /relays and /relays/:id expose effective status/lastSeenAt and nullable
+`capacity` (activeConnections,activeTunnels,retainedTunnels,activeStreams,
+maxConnections,maxTunnels,maxStreams). Missing presence is OFFLINE. `/ready`
+requires usable database policy and at least one live enabled healthy relay.
+
+The following flat-object POST endpoints are authenticated exclusively with the
+node's relay-scoped key, and cannot change operator-provisioned endpoints:
+
+- `/internal/relays/:id/register`: instanceId (32 lowercase hex), status
+  (HEALTHY/DEGRADED/DRAINING), and the seven integer capacity fields above.
+- `/internal/relays/:id/report`: the same fields plus leaseId (32 lowercase hex)
+  and sequence (1..2147483647). Replies contain relayId,instanceId,leaseId,sequence,
+  expiresAt and drainRequested. A same-instance register retry preserves its
+  existing sequence/lease. A fresh different instance requires prior expiry or a
+  DRAINING report; stale incarnations or changed duplicate sequences
+  return 409 PRESENCE_STALE. Missing presence returns 409 PRESENCE_EXPIRED and
+  permits re-registration. Heartbeats report every 2s by default (100ms..5s),
+  lease TTL is 15s, and receipt time is assigned by the API rather than the node.
+- `/internal/relays/:id/drain` and `/activate`: empty optional objects. These
+  idempotent operator commands persist DRAINING/HEALTHY policy with an audit.
+  Activation requires a fresh process/report before assignment; it cannot reopen
+  a locally drained relay. A drain reply/report flag triggers node graceful
+  shutdown; pending admissions stop and existing streams finish within the
+  existing shutdown deadline. User API keys cannot operate the shared fleet.
+
+Counts are bounded by configured server limits: maxConnections<=10000,
+maxTunnels<=100000, maxStreams<=1024 per tunnel; active counts cannot exceed their
+physical bounds. Unknown/duplicate keys and malformed types/counters return 400.
+Redis failures return 503 PRESENCE_UNAVAILABLE with no successful local fallback.
+Report traffic has separate bounded 4096/min per-IP and 900/min per-node buckets
+so multiple nodes sharing API ingress do not exhaust the user quota. Report intervals
+still need sizing for fleet load. Normal node shutdown publishes ephemeral DRAINING before the local graceful
+shutdown; it preserves durable operator enablement for a later restart. Only an
+explicit `/drain` command persists drain policy. Development starts a reporting
+worker in private-file mode using separate `RELAY_REPORT_API_URL`,
+`RELAY_REPORT_API_TOKEN_FILE`, `RELAY_REPORT_API_CA_FILE` and `RELAY_REPORT_ID`
+(falling back to verification API settings). Reporting cannot enable API credential
+verification in private-file mode. No issued secret is stored in Redis or logged. Report leases only fence state
+updates and are not substitutes for relay authentication.
+
+`POST /tunnels/:id/connect` additionally accepts optional `avoidRelayId` (opaque
+relay ID). Selection keeps the current usable relay when possible, otherwise
+chooses the node with most proportional headroom, using ID as deterministic tie
+break. A healthy alternative to avoidRelayId is preferred; the avoided relay is
+still a fallback if no other eligible node exists. This handles agent-specific
+transport failure before node-wide reports expire. No available node returns
+503 RELAY_UNAVAILABLE without allocating a credential/generation. Renewing a
+tunnel excludes its own existing credential reservation from the admission count;
+observed local socket, stream and retained-registry limits still apply.
+
+Control-mode port invocations remember their assigned relay ID and prefer an
+alternative after a retryable connection failure; every retry obtains a new
+lease/generation. Draining nodes and expired reports are excluded. Errors caused
+by credentials, TLS validation or protocol violations remain terminal. Failover
+cancels interrupted HTTP/WebSocket/SSE and never replays application traffic.
+
+The public hostname remains stable. Each relay's REGISTER_OK supplies its actual
+public HTTPS port. Local multi-relay tests use separate ports and the newly emitted
+URL after recovery. Production requires operator ingress/DNS to route that hostname
+to its assigned relay (e.g. a controller watching assignment metadata); this phase
+does not install an ingress load balancer or proxy application bytes across relays.
+Sending traffic indiscriminately to every node cannot resolve a remote local mux.

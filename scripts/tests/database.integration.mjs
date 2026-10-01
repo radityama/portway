@@ -1,3 +1,4 @@
+import { RedisPresence } from '../../apps/api/src/presence.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { databaseFixture, root } from '../testing/database.mjs';
@@ -20,10 +21,11 @@ test(
     const fixture = await databaseFixture();
     const client = databaseClient(fixture.env.DATABASE_URL);
     const database = new Database(client);
-    const store = new PrismaStore(database);
+    const presence = new RedisPresence(fixture.env.REDIS_URL);
+    const store = new PrismaStore(database, presence);
     const otherClient = databaseClient(fixture.env.DATABASE_URL);
     const otherDatabase = new Database(otherClient);
-    const otherStore = new PrismaStore(otherDatabase);
+    const otherStore = new PrismaStore(otherDatabase, presence);
     const app = createApp(store),
       otherApp = createApp(otherStore);
     const call = async (
@@ -63,6 +65,23 @@ test(
           assert.equal(await client.user.count(), 1);
           assert.equal(await client.apiKey.count(), 2);
           assert.equal(await client.tunnel.count(), 1);
+          assert.equal(await store.ready(), false);
+          await store.relayReport(
+            fixture.relayBearer,
+            'rel_local',
+            {
+              instanceId: 'a'.repeat(32),
+              status: 'HEALTHY',
+              activeConnections: 0,
+              activeTunnels: 0,
+              retainedTunnels: 0,
+              activeStreams: 0,
+              maxConnections: 128,
+              maxTunnels: 1024,
+              maxStreams: 32,
+            },
+            false,
+          );
           assert.equal(await store.ready(), true);
           const failed = structuredClone(seed);
           failed.users.push({
@@ -576,7 +595,9 @@ test(
             ).generation.toFixed(0),
             '18446744073709551615',
           );
-          const fresh = createApp(new PrismaStore(new Database(otherClient)));
+          const fresh = createApp(
+            new PrismaStore(new Database(otherClient), presence),
+          );
           const response = await call(
             '/me',
             'GET',
@@ -632,6 +653,7 @@ test(
         },
       );
     } finally {
+      await presence.close();
       await Promise.all([database.close(), otherDatabase.close()]);
       await fixture.close();
     }
@@ -735,6 +757,7 @@ test(
       },
     });
     const client = databaseClient(fixture.env.DATABASE_URL);
+    const presence = new RedisPresence(fixture.env.REDIS_URL);
     try {
       const tunnel = await client.tunnel.findUnique({
         where: { id: 'tnl_legacy' },
@@ -751,7 +774,7 @@ test(
         await client.auditLog.count({ where: { id: 'aud_legacy' } }),
         1,
       );
-      const app = createApp(new PrismaStore(new Database(client)));
+      const app = createApp(new PrismaStore(new Database(client), presence));
       const verified = await app.request(
         '/api/v1/internal/credentials/verify',
         {
@@ -769,6 +792,7 @@ test(
       assert.equal(verified.status, 401);
       assert.equal((await verified.json()).error.code, 'AUTH_INVALID');
     } finally {
+      await presence.close();
       await client.$disconnect();
       await fixture.close();
     }

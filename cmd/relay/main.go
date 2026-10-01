@@ -29,8 +29,8 @@ func main() {
 		os.Exit(1)
 	}
 	var verifier auth.Verifier
+	var api *control.Client
 	if cfg.APITokenFile != "" {
-		var api *control.Client
 		api, err = control.NewClient(cfg.APIURL, cfg.APICAFile, cfg.APITimeout)
 		if err == nil {
 			defer api.Close()
@@ -45,6 +45,18 @@ func main() {
 	if err != nil {
 		logger.Error("relay_credential_configuration_failed")
 		os.Exit(1)
+	}
+	var reportAPI *control.Client
+	if cfg.ReportTokenFile != "" {
+		reportAPI, err = control.NewClient(cfg.ReportURL, cfg.ReportCAFile, cfg.APITimeout)
+		if err == nil {
+			defer reportAPI.Close()
+			_, err = auth.ReadTokenFile(cfg.ReportTokenFile)
+		}
+		if err != nil {
+			logger.Error("relay_report_configuration_failed")
+			os.Exit(1)
+		}
 	}
 	server := relay.NewServer(logger)
 	server.TLSConfig = tlsConfig
@@ -88,11 +100,29 @@ func main() {
 	done := make(chan error, 2)
 	go func() { done <- server.Serve(life, listener) }()
 	go func() { done <- server.ServeHTTPS(life, publicListener, publicConfig) }()
+	var reporter *relay.Reporter
+	reportLife, stopReport := context.WithCancel(life)
+	reportDone := make(chan struct{})
+	if reportAPI != nil {
+		reporter = &relay.Reporter{Client: reportAPI, RelayID: cfg.ReportID, TokenFile: cfg.ReportTokenFile, Interval: cfg.ReportInterval, Snapshot: server.Snapshot, OnDrain: stop, Logger: logger}
+		go func() { defer close(reportDone); reporter.Run(reportLife) }()
+	} else {
+		close(reportDone)
+	}
+	defer stopReport()
 	var first, second error
 	select {
 	case <-ctx.Done():
 		shutdown, stopShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		started := time.Now()
+		server.CloseAdmission()
+		stopReport()
+		<-reportDone
+		if reporter != nil {
+			if err := reporter.Drain(shutdown); err != nil {
+				logger.Warn("relay_drain_report_unavailable")
+			}
+		}
 		if err := server.Shutdown(shutdown); err != nil {
 			logger.Warn("relay_shutdown_forced", "elapsed_ms", time.Since(started).Milliseconds())
 		}
@@ -103,6 +133,8 @@ func main() {
 		cancel()
 		second = <-done
 	}
+	stopReport()
+	<-reportDone
 	if first != nil || second != nil {
 		logger.Error("relay_serve_failed")
 		os.Exit(1)

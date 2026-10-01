@@ -17,10 +17,21 @@ export type TunnelFilters = {
 };
 export interface ControlBackend {
   readonly storage: 'memory' | 'postgres';
-  rate(key: string): void;
+  rate(key: string, limit?: number): void;
   ready(): Awaitable<boolean>;
   authenticate(bearer: string): Awaitable<Principal>;
-  relayAccess(bearer: string): Awaitable<void>;
+  relayAccess(bearer: string, relayId?: string): Awaitable<void>;
+  relayReport(
+    bearer: string,
+    relayId: string,
+    body: Record<string, unknown>,
+    update: boolean,
+  ): Awaitable<import('./presence.ts').ReportAcknowledgement>;
+  relayPolicy(
+    bearer: string,
+    relayId: string,
+    drain: boolean,
+  ): Awaitable<{ relay: Relay }>;
   recheck(p: Principal): Awaitable<void>;
   mutate(p: Principal, admin?: boolean): Awaitable<void>;
   profile(p: Principal): Awaitable<{

@@ -101,6 +101,21 @@ func (c *Client) post(ctx context.Context, path, token string, input, output any
 		return &Error{Code: "CONTROL_UNAVAILABLE", Temporary: true}
 	}
 	if response.StatusCode != 200 {
+		// Only this bounded internal error permits re-registration after Redis loss.
+		if response.StatusCode == 409 {
+			raw, readError := io.ReadAll(io.LimitReader(response.Body, MaxResponse+1))
+			var envelope struct {
+				Data  json.RawMessage `json:"data"`
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+				Meta json.RawMessage `json:"meta"`
+			}
+			if readError == nil && len(raw) <= MaxResponse && uniqueJSON(raw) && decode(raw, &envelope) == nil && envelope.Error.Code == "PRESENCE_EXPIRED" {
+				return &Error{Code: "PRESENCE_EXPIRED", Temporary: true}
+			}
+		}
 		return &Error{Code: "CONTROL_REJECTED"}
 	}
 	if strings.Split(response.Header.Get("Content-Type"), ";")[0] != "application/json" {
@@ -137,6 +152,9 @@ func (c *Client) post(ctx context.Context, path, token string, input, output any
 // encoding/json otherwise accepts case-insensitive aliases for tagged fields.
 func exactKeys(raw []byte, shape reflect.Type) bool {
 	if shape.Kind() == reflect.Pointer {
+		if string(raw) == "null" {
+			return true
+		}
 		shape = shape.Elem()
 	}
 	if shape.Kind() != reflect.Struct || reflect.PointerTo(shape).Implements(reflect.TypeFor[json.Unmarshaler]()) {
@@ -238,6 +256,7 @@ type Relay struct {
 	Protocol   string     `json:"protocol"`
 	Status     string     `json:"status"`
 	LastSeenAt *time.Time `json:"lastSeenAt"`
+	Capacity   *Capacity  `json:"capacity"`
 }
 type Credential struct {
 	ID        string    `json:"id"`
@@ -255,13 +274,17 @@ type Assignment struct {
 }
 
 func (c *Client) Connect(ctx context.Context, tunnel string, minimum protocol.Generation, token string) (Assignment, error) {
+	return c.ConnectAvoid(ctx, tunnel, minimum, token, "")
+}
+func (c *Client) ConnectAvoid(ctx context.Context, tunnel string, minimum protocol.Generation, token, avoid string) (Assignment, error) {
 	var a Assignment
-	if !protocol.ValidTunnelID(tunnel) || minimum == 0 {
+	if !protocol.ValidTunnelID(tunnel) || minimum == 0 || avoid != "" && !protocol.ValidTunnelID(avoid) {
 		return a, InvalidAssignment()
 	}
 	err := c.post(ctx, "/tunnels/"+tunnel+"/connect", token, struct {
 		Minimum protocol.Generation `json:"minimumGeneration"`
-	}{minimum}, &a)
+		Avoid   string              `json:"avoidRelayId,omitempty"`
+	}{minimum, avoid}, &a)
 	if err != nil {
 		return Assignment{}, err
 	}
@@ -270,7 +293,7 @@ func (c *Client) Connect(ctx context.Context, tunnel string, minimum protocol.Ge
 	host := a.Relay.Hostname
 	validHost := net.ParseIP(host) != nil || host == "localhost" || protocol.ValidHostname(host)
 	now := time.Now()
-	if !protocol.ValidTunnelID(a.Relay.ID) || !validHost || a.Relay.Port < 1 || a.Relay.Port > 65535 || a.Relay.Protocol != "tls" || a.Relay.Status != "HEALTHY" || !protocol.ValidTunnelID(a.Credential.ID) || a.Credential.TunnelID != tunnel || a.Credential.Scope != "connect" || !protocol.ValidToken(a.Credential.Token) || a.Credential.IssuedAt.IsZero() || a.Credential.IssuedAt.After(now.Add(30*time.Second)) || !a.Credential.ExpiresAt.After(now) || !a.Credential.ExpiresAt.After(a.Credential.IssuedAt) || a.Credential.ExpiresAt.Sub(a.Credential.IssuedAt) > 15*time.Minute || a.Credential.ExpiresAt.After(now.Add(15*time.Minute+30*time.Second)) || a.Generation < minimum || !protocol.ValidHostname(a.PublicHostname) || !strings.HasPrefix(a.PublicHostname, prefix) {
+	if !protocol.ValidTunnelID(a.Relay.ID) || !validHost || a.Relay.Port < 1 || a.Relay.Port > 65535 || a.Relay.Protocol != "tls" || a.Relay.Status != "HEALTHY" || a.Relay.Capacity != nil && !a.Relay.Capacity.valid() || !protocol.ValidTunnelID(a.Credential.ID) || a.Credential.TunnelID != tunnel || a.Credential.Scope != "connect" || !protocol.ValidToken(a.Credential.Token) || a.Credential.IssuedAt.IsZero() || a.Credential.IssuedAt.After(now.Add(30*time.Second)) || !a.Credential.ExpiresAt.After(now) || !a.Credential.ExpiresAt.After(a.Credential.IssuedAt) || a.Credential.ExpiresAt.Sub(a.Credential.IssuedAt) > 15*time.Minute || a.Credential.ExpiresAt.After(now.Add(15*time.Minute+30*time.Second)) || a.Generation < minimum || !protocol.ValidHostname(a.PublicHostname) || !strings.HasPrefix(a.PublicHostname, prefix) {
 		return Assignment{}, InvalidAssignment()
 	}
 	return a, nil

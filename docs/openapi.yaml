@@ -7,7 +7,10 @@ info:
     scoped projects/tunnels, configured relay metadata and credential issuance in
     PostgreSQL by default (explicit bounded memory mode is available for tests).
     Durable state and revocation survive API restart. Domains/logs/metrics remain later work.
-    Database admission/transaction failures return 503 STORAGE_UNAVAILABLE.
+    Database admission/transaction failures return 503 STORAGE_UNAVAILABLE. Phase 11
+    requires fresh HEALTHY Redis reports and capacity headroom for relay assignments;
+    Redis failure returns 503 PRESENCE_UNAVAILABLE. Relay-scoped report/drain routes
+    fence stale incarnations and keep application traffic local to its assigned relay.
     JSON bodies are at most 64 KiB. Global 429/503/413 error envelopes apply.
     Secret-bearing responses use Cache-Control no-store and are not replay-cached.
     This contract manages metadata; it does not carry public application traffic.
@@ -438,6 +441,139 @@ paths:
         '503':
           $ref: '#/components/responses/ErrorResponse'
 
+  /internal/relays/{relayId}/register:
+    post:
+      tags:
+        - Relays
+      description:
+        Relay-scoped register. Live state uses 15s Redis report leases; durable
+        operator policy remains in PostgreSQL.
+      security:
+        - relayAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RelayId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RelayRegister'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: Relay acknowledgement
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RelayReportAck'
+  /internal/relays/{relayId}/report:
+    post:
+      tags:
+        - Relays
+      description:
+        Relay-scoped report. Live state uses 15s Redis report leases; durable
+        operator policy remains in PostgreSQL.
+      security:
+        - relayAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RelayId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RelayReport'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: Relay acknowledgement
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RelayReportAck'
+  /internal/relays/{relayId}/drain:
+    post:
+      tags:
+        - Relays
+      description:
+        Relay-scoped drain. Live state uses 15s Redis report leases; durable
+        operator policy remains in PostgreSQL.
+      security:
+        - relayAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RelayId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: Relay acknowledgement
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          relay:
+                            $ref: '#/components/schemas/Relay'
+  /internal/relays/{relayId}/activate:
+    post:
+      tags:
+        - Relays
+      description:
+        Relay-scoped activate. Live state uses 15s Redis report leases; durable
+        operator policy remains in PostgreSQL.
+      security:
+        - relayAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RelayId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+        '200':
+          description: Relay acknowledgement
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          relay:
+                            $ref: '#/components/schemas/Relay'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -615,6 +751,9 @@ components:
         status:
           type: string
           enum: [HEALTHY, DEGRADED, DRAINING, OFFLINE]
+        capacity:
+          allOf: [{ $ref: '#/components/schemas/RelayCapacity' }]
+          nullable: true
         lastSeenAt: { type: string, format: date-time, nullable: true }
 
     CreateProjectRequest:
@@ -669,6 +808,8 @@ components:
       type: object
       additionalProperties: false
       properties:
+        avoidRelayId:
+          { type: string, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' }
         minimumGeneration: { type: string, pattern: '^[1-9][0-9]{0,19}$' }
 
     ConnectAssignment:
@@ -703,6 +844,186 @@ components:
         bytesOut: { type: integer, format: int64, minimum: 0 }
         p95LatencyMs: { type: number, minimum: 0 }
         p99LatencyMs: { type: number, minimum: 0 }
+
+    RelayCapacity:
+      type: object
+      additionalProperties: false
+      required:
+        - activeConnections
+        - activeTunnels
+        - retainedTunnels
+        - activeStreams
+        - maxConnections
+        - maxTunnels
+        - maxStreams
+      properties:
+        activeConnections:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        activeTunnels:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        retainedTunnels:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        activeStreams:
+          type: integer
+          minimum: 0
+          maximum: 10240000
+        maxConnections:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        maxTunnels:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        maxStreams:
+          type: integer
+          minimum: 1
+          maximum: 1024
+    RelayRegister:
+      type: object
+      additionalProperties: false
+      required:
+        - activeConnections
+        - activeTunnels
+        - retainedTunnels
+        - activeStreams
+        - maxConnections
+        - maxTunnels
+        - maxStreams
+        - instanceId
+        - status
+      properties:
+        activeConnections:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        activeTunnels:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        retainedTunnels:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        activeStreams:
+          type: integer
+          minimum: 0
+          maximum: 10240000
+        maxConnections:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        maxTunnels:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        maxStreams:
+          type: integer
+          minimum: 1
+          maximum: 1024
+        instanceId:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+        status:
+          type: string
+          enum:
+            - HEALTHY
+            - DEGRADED
+            - DRAINING
+    RelayReport:
+      type: object
+      additionalProperties: false
+      required:
+        - activeConnections
+        - activeTunnels
+        - retainedTunnels
+        - activeStreams
+        - maxConnections
+        - maxTunnels
+        - maxStreams
+        - instanceId
+        - status
+        - leaseId
+        - sequence
+      properties:
+        activeConnections:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        activeTunnels:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        retainedTunnels:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        activeStreams:
+          type: integer
+          minimum: 0
+          maximum: 10240000
+        maxConnections:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        maxTunnels:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        maxStreams:
+          type: integer
+          minimum: 1
+          maximum: 1024
+        instanceId:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+        status:
+          type: string
+          enum:
+            - HEALTHY
+            - DEGRADED
+            - DRAINING
+        leaseId:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+    RelayReportAck:
+      type: object
+      additionalProperties: false
+      required:
+        - relayId
+        - instanceId
+        - leaseId
+        - sequence
+        - expiresAt
+        - drainRequested
+      properties:
+        relayId:
+          type: string
+        instanceId:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+        leaseId:
+          type: string
+          pattern: ^[a-f0-9]{32}$
+        sequence:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        expiresAt:
+          type: string
+          format: date-time
+        drainRequested:
+          type: boolean
 
   responses:
     ErrorResponse:

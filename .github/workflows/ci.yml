@@ -47,4 +47,6 @@ jobs:
       - run: pnpm test:control
       - run: pnpm test:database
       - run: pnpm test:database-control
+      - run: pnpm test:fleet-api
+      - run: pnpm test:fleet
       - run: pnpm test:bootstrap

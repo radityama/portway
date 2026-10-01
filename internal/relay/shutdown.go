@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+func (s *Server) CloseAdmission() { s.mu.Lock(); s.draining = true; s.mu.Unlock() }
+
 func (s *Server) Draining() bool { s.mu.RLock(); defer s.mu.RUnlock(); return s.draining }
 func (s *Server) notifyLocked()  { close(s.changed); s.changed = make(chan struct{}) }
 
@@ -36,7 +38,8 @@ func (s *Server) forceCloseIO() {
 // after this method returns, then joins both serving calls and their workers.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
-	first := !s.draining
+	first := !s.shutdownStarted
+	s.shutdownStarted = true
 	s.draining = true
 	s.mu.Unlock()
 	if !first {

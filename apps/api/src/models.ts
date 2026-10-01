@@ -1,3 +1,4 @@
+import type { Capacity } from './presence.ts';
 export type Role = 'OWNER' | 'ADMIN' | 'MEMBER' | 'VIEWER';
 export type TunnelStatus =
   | 'CREATED'
@@ -57,6 +58,7 @@ export type Relay = {
   protocol: 'tls';
   status: 'HEALTHY' | 'DEGRADED' | 'DRAINING' | 'OFFLINE';
   lastSeenAt: string | null;
+  capacity?: Capacity | null;
 };
 export type RelayKey = {
   relayId: string;

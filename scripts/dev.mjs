@@ -88,7 +88,18 @@ try {
   });
   controller.signal.throwIfAborted();
 
-  supervisor.start(relayPath, [], { cwd: root });
+  supervisor.start(relayPath, [], {
+    cwd: root,
+    env: {
+      ...process.env,
+      RELAY_REPORT_API_URL:
+        process.env.RELAY_REPORT_API_URL ??
+        `http://127.0.0.1:${ports.API_PORT}/api/v1`,
+      RELAY_REPORT_API_TOKEN_FILE:
+        process.env.RELAY_REPORT_API_TOKEN_FILE ?? '.tmp/dev/relay-api-token',
+      RELAY_REPORT_ID: process.env.RELAY_REPORT_ID ?? 'rel_local',
+    },
+  });
   supervisor.start('pnpm', ['--filter', '@portway/api', 'dev'], { cwd: root });
   supervisor.start('pnpm', ['--filter', '@portway/dashboard', 'dev'], {
     cwd: root,

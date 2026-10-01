@@ -519,3 +519,34 @@ Seeded relay HEALTHY metadata is still operator configuration; dynamic presence,
 capacity, selection/draining and failover remain Phase 11. Audit history is durable;
 operator retention/archival and fleet-scale fine-grained writer locks remain later
 work. Relay hot-path state remains local and ephemeral.
+
+## 15. Phase 11 relay fleet state
+
+No new durable entity is required. `Relay` remains operator-provisioned identity,
+endpoint/region/protocol and administrative policy; its durable status is enabled
+HEALTHY/DEGRADED/OFFLINE or terminal-for-process DRAINING. Relay-scoped ApiKeys
+own one node. Reporter registration cannot create or change endpoint metadata.
+Self drain/activate commands persist status and a metadata-only operator audit.
+
+Redis `portway:relay:{relayId}:presence` holds a bounded validated health/capacity
+snapshot, random process instance ID, server-issued lease ID, monotonic sequence,
+receipt and expiry times. Reports expire after 15 seconds. Missing/expired state
+is OFFLINE, independent of seeded HEALTHY metadata. Registration retries for the
+same instance preserve its lease; a new instance registers after expiry or a DRAINING report, fencing earlier
+reporters. A fresh different HEALTHY/DEGRADED instance rejects replacement. An
+empty Redis key permits re-registration; an extant different lease rejects stale
+updates. Duplicate sequences must carry the same report and never extend expiry.
+All updates/TTL/fencing are atomic Lua operations. Redis has finite connection and
+command deadlines, no unbounded/offline command queue, and no memory fallback.
+
+Assignment reads bounded live reports and durable current unexpired credential
+reservations in the existing writer transaction. Admission uses the larger of
+reported active tunnels and outstanding latest-generation tunnel assignments;
+the requesting tunnel is excluded from its own reservation count so renewing its
+latest generation does not reserve a second tunnel slot. Observed local
+connection/stream/retained-watermark saturation also excludes the node. Snapshot
+capacity is advisory; relay hard socket/stream/registry limits are authoritative.
+A relay's reported observations never grant credentials or tenant access. Redis
+loss prevents new control assignments until nodes report again; already admitted
+sessions keep their local lease. Presence is not durable identity or live tunnel
+ownership consensus. API memory mode uses bounded process-local presence only.

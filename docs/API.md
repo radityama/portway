@@ -828,3 +828,13 @@ public ingress. Relay and CLI scrapes bind only to 127.0.0.1 when optional
 `RELAY_METRICS_PORT` / `PORTWAY_METRICS_PORT` (1..65535) are set; 0 disables them.
 These local operator endpoints expose no tunnel IDs or request targets. Metrics
 use finite method/status/route groups; no arbitrary input becomes a label.
+
+## Phase 17 CLI management boundary
+
+[CLI.md](./CLI.md) defines the extended command surface. These commands consume
+the existing auth, project, tunnel, domain, relay, logs and metrics operations;
+REST shapes and OpenAPI do not change. The client saves an expiring session,
+binds it to its API base/trust and uses private bounded local state. Logout revokes
+only that managed session, never the configured deployment key. Doctor performs
+no credential issuance or registration. Local stop uses authenticated loopback
+process control and the existing graceful shutdown path; it is not a server API.

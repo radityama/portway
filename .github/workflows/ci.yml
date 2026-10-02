@@ -46,6 +46,7 @@ jobs:
       - run: make build
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:control
+      - run: pnpm test:cli
       - run: pnpm test:database
       - run: pnpm test:database-control
       - run: pnpm test:fleet-api

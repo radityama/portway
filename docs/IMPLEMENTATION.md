@@ -505,6 +505,16 @@ failover with higher generations. `make load-test` and `make chaos-test` run thr
 capacity claim. See [PHASE_16.md](./PHASE_16.md) and
 [load test operations](../tests/load/README.md).
 
+## Phase 17 — CLI Completion
+
+Complete the developer command surface from PRD.md with private saved sessions
+and settings, scoped API management, local start/stop/status, safe local service
+detection, ephemeral bootstrap, diagnostics and version output. Preserve existing
+protocol, forwarding, reconnect, generation and shutdown invariants. See
+[CLI.md](./CLI.md) for the pre-implementation contract and
+[PHASE_17.md](./PHASE_17.md) for the plan and verification. Release packaging and
+production deployment follow in Phase 18.
+
 ## 21. Go Quality Gates
 
 For every networking change:

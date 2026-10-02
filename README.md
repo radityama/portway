@@ -503,3 +503,30 @@ Failover under ten seconds requires a healthy alternative relay. Replacing the
 same relay ID remains fenced until its 15-second presence lease expires. See
 [Phase 16](./docs/PHASE_16.md) and [test operations](./tests/load/README.md) for
 profiles, cleanup, prerequisites and operating limits.
+
+## Developer CLI (Phase 17)
+
+Save an expiring session using your operator-provisioned private API key file:
+
+```bash
+portway login --token-file /path/to/private/api-key --api-url https://control.example.com/api/v1
+portway config set project_id prj_example
+portway doctor 3000
+portway 3000
+```
+
+`portway start` detects a configured/script/framework port or a recent localhost
+URL in `PORTWAY_DEV_LOG_FILE`; ambiguity requires an explicit port. Saved-session
+starts without a selected tunnel allocate an ephemeral record and revoke it on
+orderly exit. `create --name demo --port 3000 --use` selects a persistent tunnel.
+`list`, `status`, `logs`, `domain` and `delete` use scoped API calls. `stop <id>`
+requests graceful shutdown through the owned loopback agent, including during API
+outages. `logout` clears and revokes only the managed session.
+
+State is private under `PORTWAY_CONFIG_DIR` or the OS user configuration directory.
+Flags override environment, which overrides saved settings. Cached sessions are
+bound to their API URL/trust selection. `--json` provides line-delimited objects;
+credentials never appear in arguments or output. Existing direct-file diagnostics
+remain available. See [CLI.md](./docs/CLI.md) for commands and limits.
+`make cli-integration` runs the real PostgreSQL/Redis/API/relay command suite;
+it also runs in `make check` and CI.

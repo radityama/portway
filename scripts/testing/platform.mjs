@@ -16,6 +16,7 @@ import { digest } from '../../apps/api/src/store.ts';
 export async function platformFixture({
   network = false,
   maxStreams = 32,
+  apiOverrides = {},
 } = {}) {
   const database = await databaseFixture();
   const client = databaseClient(database.env.DATABASE_URL);
@@ -88,6 +89,7 @@ export async function platformFixture({
       PORTWAY_API_TOKEN_FILE: join(database.privateDir, 'api-token'),
       PORTWAY_RELAY_CA_FILE: join(database.privateDir, 'ca.pem'),
       PORTWAY_STATE_DIR: join(database.directory, 'agent-state'),
+      ...apiOverrides,
     };
     delete env.PORTWAY_GENERATION;
     const call = async (path, method = 'GET', body) => {
@@ -285,6 +287,8 @@ export async function platformFixture({
     };
     return {
       database,
+      base,
+      localPort: upstream.address().port,
       client,
       bridge,
       processes,

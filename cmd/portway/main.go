@@ -16,6 +16,7 @@ import (
 
 	"github.com/radityama/portway/internal/agent"
 	"github.com/radityama/portway/internal/auth"
+	"github.com/radityama/portway/internal/cli"
 	"github.com/radityama/portway/internal/config"
 	"github.com/radityama/portway/internal/control"
 	"github.com/radityama/portway/internal/observability"
@@ -51,9 +52,19 @@ func main() {
 	os.Exit(code)
 }
 
-func run(ctx context.Context, args []string, env config.Lookup, stdout, stderr io.Writer) int {
+func runTunnel(ctx context.Context, args []string, env config.Lookup, stdout, stderr io.Writer, local *cli.Runtime) int {
 	jsonMode, _ := env("PORTWAY_JSON")
 	emit := func(event Event) {
+		if local != nil {
+			switch event.Event {
+			case "ready":
+				local.Update("ready", event.PublicURL)
+			case "reconnect_scheduled":
+				local.Update("reconnecting", "")
+			case "shutdown_started", "tunnel_draining":
+				local.Update("draining", "")
+			}
+		}
 		event.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
 		if jsonMode == "1" {
 			_ = json.NewEncoder(stdout).Encode(event)

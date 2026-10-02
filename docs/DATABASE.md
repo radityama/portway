@@ -581,3 +581,13 @@ The API rechecks tunnel scope and current relay/generation after a presence read
 Revoked tunnels and observations from superseded assignments are unavailable.
 Local records expire after one hour, and presence itself expires after 15 seconds.
 These measurements are not durable UsageRecord or AuditLog data.
+
+## Phase 17 local CLI state
+
+The CLI caches client configuration, an endpoint-bound session and per-tunnel
+local process-control metadata in private bounded files outside PostgreSQL/Redis.
+A client needs the raw session bearer to authenticate; its private token file is
+not a server credential table or routing source. Server-side sessions still store
+only hashes with their existing parent/expiry/revocation fields. Local management
+secrets cannot authorize API or relay admission. No durable entity, migration or
+public-request lookup is added. See [CLI.md](./CLI.md).

@@ -132,7 +132,7 @@ export async function runControlScenario(database) {
       API_STORAGE: database ? 'postgres' : 'memory',
       API_SEED_FILE: join(privateDir, 'control-seed.json'),
       API_CREDENTIAL_TTL_SECONDS: '3',
-      // Keep the fixture's drain within its 12-second revocation deadline.
+      // Keep fixture shutdown bounded after the revocation retry.
       RELAY_SHUTDOWN_TIMEOUT: '2s',
       PORTWAY_SHUTDOWN_TIMEOUT: '2s',
       PUBLIC_BASE_DOMAIN: 'portway.localhost',
@@ -286,7 +286,8 @@ export async function runControlScenario(database) {
       headers: { Authorization: 'Bearer ' + bearer },
     });
     assert.equal(revoke.status, 200);
-    await until(() => cli.closed(), 12_000);
+    // A short-lived session retains reconnect backoff, which can reach 30s.
+    await until(() => cli.closed(), 40_000);
     const [code] = await cli.completion;
     assert.equal(code, 1);
     assert.ok(cli.output().includes('CONTROL_REJECTED'));

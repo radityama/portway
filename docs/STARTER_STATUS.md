@@ -81,7 +81,8 @@ unsupported. See [PHASE_8.md](./PHASE_8.md).
 Phases 9–10 add the scoped control API and durable PostgreSQL policy described
 below. Phase 11 adds live relay health, capacity and selection. Phase 12 adds DNS
 ownership, custom aliases and certificate lifecycle. Phase 13 adds the scoped
-browser dashboard. The next phase is Phase 14: observability.
+browser dashboard. Phase 14 adds observability and Phase 15 adds security hardening.
+The next phase is Phase 16: load and chaos tests.
 
 ## What this starter contains
 
@@ -209,3 +210,15 @@ counters, latency histograms and relay/runtime gauges are implemented. Bounded
 current-generation observations use existing fenced presence reports; scoped API
 reads and the dashboard expose recent logs and traffic measurements. Collection
 stays local during control outages. See [PHASE_14.md](./PHASE_14.md).
+
+## Phase 15
+
+Raw HTTPS adversarial tests verify hostname/SNI and framing boundaries, upstream
+header rejection, bounded slow-peer admission and recovery without damaging an
+active tunnel. A production API suite with disposable PostgreSQL/Redis verifies
+tenant/viewer/operator isolation, malformed/oversized bodies, slow upload timeouts,
+credential expiry/revocation and denied replays after parent logout. Go credential
+files now reject final-component symlinks and compare opened file identity; relay
+AUTH uses an explicit parent-role allowlist independently of database constraints.
+The threat model maps all twelve phase requirements to executable tests. See
+[PHASE_15.md](./PHASE_15.md) and [SECURITY.md](./SECURITY.md).

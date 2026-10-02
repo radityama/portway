@@ -488,7 +488,7 @@ paths:
   /internal/credentials/verify:
     post:
       tags: [Auth]
-      description: Relay AUTH-only verification; never used by public request forwarding. Relay credential is scoped to relayId; raw tunnel tokens are not sent here. Superseded relay/generation assignments return AUTH_REVOKED; admitted local leases remain usable until replacement or expiry.
+      description: Relay AUTH-only verification; never used by public request forwarding. Relay credential is scoped to relayId; raw tunnel tokens are not sent here. Parent membership must be OWNER, ADMIN or MEMBER; missing, VIEWER or unsupported roles return AUTH_REVOKED. Superseded relay/generation assignments return AUTH_REVOKED; admitted local leases remain usable until replacement or expiry.
       security:
         - relayAuth: []
       requestBody:

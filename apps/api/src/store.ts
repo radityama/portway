@@ -467,7 +467,7 @@ export class ControlStore {
             (m) =>
               m.userId === k.userId &&
               m.organizationId === k.organizationId &&
-              m.role !== 'VIEWER',
+              ['OWNER', 'ADMIN', 'MEMBER'].includes(m.role),
           ),
       ) &&
       [...this.relays.values()].some(
@@ -1013,7 +1013,7 @@ export class ControlStore {
         (m) =>
           m.userId === parent.userId &&
           m.organizationId === parent.organizationId &&
-          m.role !== 'VIEWER',
+          ['OWNER', 'ADMIN', 'MEMBER'].includes(m.role),
       )
     )
       throw new ApiFailure(401, 'AUTH_REVOKED', 'Credential revoked');

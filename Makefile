@@ -1,4 +1,4 @@
-.PHONY: setup dev dev-credentials doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check control-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration integration e2e load-test
+.PHONY: setup dev dev-credentials doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check control-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration security-integration integration e2e load-test
 
 FUZZTIME ?= 10s
 
@@ -57,7 +57,7 @@ build:
 	go build -o bin/portway-cert ./cmd/certctl
 	pnpm build
 
-check: fmt-check test test-race lint typecheck build control-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration
+check: fmt-check test test-race lint typecheck build control-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration security-integration
 
 control-integration: build
 	pnpm test:control
@@ -79,6 +79,10 @@ dashboard-integration: build
 
 observability-integration: build
 	pnpm test:observability
+
+security-integration: build
+	go test ./internal/auth ./internal/relay -run 'TestCredentialFilesRejectSymlinks|TestSecurity'
+	pnpm test:security
 
 integration:
 	go test ./tests/integration/...

@@ -143,14 +143,22 @@ func ReadTokenFile(path string) (string, error) {
 }
 
 func openPrivateFile(path string, maxSize int64) (*os.File, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !privateRegularFile(info, maxSize) {
+		return nil, ErrConfig
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, ErrConfig
 	}
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() > maxSize || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) || !privateRegularFile(opened, maxSize) {
 		_ = file.Close()
 		return nil, ErrConfig
 	}
 	return file, nil
+}
+
+func privateRegularFile(info os.FileInfo, maxSize int64) bool {
+	return info.Mode().IsRegular() && info.Size() <= maxSize && (runtime.GOOS == "windows" || info.Mode().Perm()&0077 == 0)
 }

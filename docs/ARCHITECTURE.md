@@ -648,3 +648,14 @@ CPU seconds by runtime class, and Node process
 CPU seconds and resident memory bytes; these are not CPU percentages. Request
 histograms measure completed whole lifetimes, not time to first byte. Scrapes have
 connection admission limits, header/write/idle deadlines and context-owned shutdown.
+
+## Phase 15 credential file boundary
+
+Go agent/API/operator token files and development relay credential policy files
+must be bounded private regular files. Loaders reject a symlink at the final path
+component and compare the opened file's identity to the checked path, then recheck
+type, size and POSIX permissions before reading. Credential directories must be
+controlled by the service account; these checks are not isolation from a hostile
+local user who can concurrently modify that directory. Windows requires appropriate
+ACLs. Static policy still loads at relay startup; operator tokens retain their
+existing reload behavior. No HTTP API, durable schema or tunnel frame changes.

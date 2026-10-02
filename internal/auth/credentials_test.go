@@ -135,3 +135,39 @@ func TestPrivateBoundedCredentialFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestCredentialFilesRejectSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "token")
+	recordsPath := filepath.Join(dir, "records.json")
+	if err := os.WriteFile(tokenPath, []byte(fixtureToken), 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal([]Record{record()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recordsPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []struct {
+		name, target string
+		load         func(string) error
+	}{
+		{"token", tokenPath, func(path string) error { _, err := ReadTokenFile(path); return err }},
+		{"policy", recordsPath, func(path string) error { _, err := LoadVerifier(path); return err }},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			link := filepath.Join(dir, entry.name+"-link")
+			if err := os.Symlink(entry.target, link); err != nil {
+				if runtime.GOOS == "windows" {
+					t.Skip("symlink creation is unavailable")
+				}
+				t.Fatal(err)
+			}
+			if err := entry.load(link); !errors.Is(err, ErrConfig) {
+				t.Fatal("symlink credential file was accepted")
+			}
+		})
+	}
+}

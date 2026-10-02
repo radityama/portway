@@ -470,6 +470,13 @@ Test:
 - host-header edge cases
 - authorization boundary violations
 
+Phase 15 implements raw HTTPS and production API adversarial suites, hardens Go
+credential file checks and independently rejects unsupported parent roles during
+relay AUTH. See [PHASE_15.md](./PHASE_15.md) for delivery and verification, and
+[SECURITY.md](./SECURITY.md) for the threat model and twelve-item coverage matrix.
+The focused `make security-integration` target also runs through `make check` and
+CI; no data-plane control lookup, durable migration or protocol frame is added.
+
 ## 20. Phase 16 — Load and Chaos Tests
 
 Simulate:

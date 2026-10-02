@@ -196,6 +196,32 @@ test('API authenticates keys and sessions; logout invalidates dependent credenti
   for (const secret of [owner, session, another, lease.credential.token])
     assert.ok(!stored.includes(secret));
 });
+test('relay verification independently requires a supported parent membership role', async () => {
+  const { store, call, create } = fixture();
+  const tunnel = await create();
+  const lease = (await call(`/tunnels/${tunnel.id}/connect`, 'POST', {})).value
+    .data;
+  const membership = store.memberships.find((m) => m.userId === 'usr_a')!;
+  for (const role of ['OWNER', 'ADMIN', 'MEMBER'] as const) {
+    membership.role = role;
+    assert.equal(
+      store.verify(relayToken, 'rel_a', digest(lease.credential.token))
+        .generation,
+      lease.generation,
+    );
+  }
+  for (const role of ['VIEWER', 'SUPERUSER', '']) {
+    // Model corrupted policy without going through validated seed loading.
+    membership.role = role as typeof membership.role;
+    assert.throws(
+      () => store.verify(relayToken, 'rel_a', digest(lease.credential.token)),
+      {
+        status: 401,
+        code: 'AUTH_REVOKED',
+      },
+    );
+  }
+});
 test('all project and tunnel operations enforce organization and role; revoked tunnels stay terminal', async () => {
   const { call, create } = fixture();
   const tunnel = await create();

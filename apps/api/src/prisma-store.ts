@@ -1056,7 +1056,7 @@ export class PrismaStore implements ControlBackend {
           },
         },
       });
-      if (!m || m.role === 'VIEWER')
+      if (!m || !['OWNER', 'ADMIN', 'MEMBER'].includes(m.role))
         throw new ApiFailure(401, 'AUTH_REVOKED', 'Credential revoked');
       if (
         c.expiresAt.getTime() <= this.now() ||

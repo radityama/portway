@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–14 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. Custom domains now use DNS TXT ownership proofs, current-generation relay aliases and reloadable certificates with local issuance and renewal. The dashboard now provides scoped login, overview, tunnel and domain management, read-only relay health and account settings with encrypted HttpOnly sessions. Phase 14 adds structured request logs, local Prometheus scrapes and bounded, generation-scoped traffic observations.
+Phases 0–15 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. Custom domains now use DNS TXT ownership proofs, current-generation relay aliases and reloadable certificates with local issuance and renewal. The dashboard now provides scoped login, overview, tunnel and domain management, read-only relay health and account settings with encrypted HttpOnly sessions. Phase 14 adds structured request logs, local Prometheus scrapes and bounded, generation-scoped traffic observations.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Phase 12](./docs/PHASE_12.md), [Phase 13](./docs/PHASE_13.md), [Phase 14](./docs/PHASE_14.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Phase 12](./docs/PHASE_12.md), [Phase 13](./docs/PHASE_13.md), [Phase 14](./docs/PHASE_14.md), [Phase 15](./docs/PHASE_15.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -470,3 +470,17 @@ Run `pnpm test:observability` after `make build` for real PostgreSQL/Redis, API,
 relay and CLI checks covering HTTP, SSE, WebSockets, cancellation, secret omission
 and outage isolation. It also runs in `make check` and CI. See
 [Phase 14](./docs/PHASE_14.md) and [the API contract](./docs/API.md#phase-14-observability-contract).
+
+## Security hardening (Phase 15)
+
+Phase 15 adds raw HTTPS and production API adversarial tests, symlink rejection
+for Go credential files and an explicit parent-role check during relay AUTH.
+`make security-integration` builds the project and runs the focused suite using
+disposable PostgreSQL/Redis containers. It also runs in `make check` and CI.
+
+The [security boundaries and coverage matrix](./docs/SECURITY.md) map all twelve
+Phase 15 requirements to executable tests. They include ambiguous framing,
+hostname/SNI injection, hostile upstream headers, slow peers, capacity recovery,
+tenant/viewer/operator boundaries and parent revocation. Public application
+authentication and active revocation semantics retain their documented limits.
+See [Phase 15](./docs/PHASE_15.md) for implementation and verification details.

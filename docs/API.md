@@ -510,7 +510,9 @@ POST /api/v1/internal/credentials/verify is authenticated by a separate private
 RELAY_API_TOKEN_FILE credential (hash in the API seed), scoped to relayId. Body:
 {"tokenHash":"<64 lowercase SHA-256 hex>","relayId":"rel_..."}. The API checks
 credential expiry/revocation, tunnel state, issuance relay and parent user/key
-policy, returning {tunnelId,generation,expiresAt}; failures use AUTH_INVALID,
+policy, returning {tunnelId,generation,expiresAt}; parent membership must have
+role OWNER, ADMIN or MEMBER. Missing, VIEWER and unsupported roles return
+AUTH_REVOKED, including when database policy constraints have drifted. Failures use AUTH_INVALID,
 AUTH_EXPIRED or AUTH_REVOKED. User API keys cannot invoke this endpoint; relay
 keys cannot access user endpoints. Verification runs only during AUTH and is
 bounded by the relay handshake deadline. There is no successful-auth cache or

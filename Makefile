@@ -1,5 +1,12 @@
 .PHONY: setup dev dev-credentials doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check control-integration cli-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration security-integration integration e2e load-test chaos-test
 
+.PHONY: release release-container
+release:
+	node scripts/release.mjs --version "$(VERSION)"
+
+release-container:
+	pnpm test:release-container
+
 FUZZTIME ?= 10s
 
 setup:

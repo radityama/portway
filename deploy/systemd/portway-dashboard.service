@@ -1,0 +1,35 @@
+[Unit]
+Description=Portway dashboard
+After=network-online.target portway-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=portway
+Group=portway
+WorkingDirectory=/opt/portway/current/apps/dashboard
+EnvironmentFile=/etc/portway/control.env
+Environment=NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+ExecStart=/usr/local/bin/node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3000
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/portway/current/apps/dashboard/.next/cache
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+TasksMax=256
+LimitNOFILE=4096
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

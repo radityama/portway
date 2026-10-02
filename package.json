@@ -22,6 +22,7 @@
     "test:bootstrap": "node --test scripts/tests/dev.integration.mjs",
     "test:control": "node --test scripts/tests/control.integration.mjs",
     "test:cli": "node --test scripts/tests/cli.integration.mjs",
+    "test:release-container": "node --test scripts/tests/release-container.integration.mjs",
     "db:deploy": "pnpm --filter @portway/api prisma:deploy",
     "db:seed": "pnpm --filter @portway/api prisma:seed",
     "test:database": "node --test scripts/tests/database.integration.mjs",

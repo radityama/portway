@@ -530,3 +530,20 @@ credentials never appear in arguments or output. Existing direct-file diagnostic
 remain available. See [CLI.md](./docs/CLI.md) for commands and limits.
 `make cli-integration` runs the real PostgreSQL/Redis/API/relay command suite;
 it also runs in `make check` and CI.
+
+## Release and self-hosting (Phase 18)
+
+`make release VERSION=v0.1.0` builds versioned CLI/relay/certificate executables
+for Linux, macOS and Windows on amd64/arm64, plus hashes and revision metadata.
+It requires clean committed source and pinned Go. Reviewed local POSIX/PowerShell
+installers require an explicit version and verify hashes before replacing a
+binary. Tag CI runs quality checks, native Windows installer checks and provenance
+attestation before creating a draft release for review.
+
+The self-hosting baseline includes hardened Linux service units, HTTPS control
+ingress, a non-root relay image and provisioning/upgrade/rollback guidance.
+`make release-container` checks the packaged relay with a read-only filesystem,
+dropped capabilities and bounded resources, including real HTTPS forwarding.
+See [RELEASE.md](./docs/RELEASE.md), [SELF_HOSTING.md](./docs/SELF_HOSTING.md)
+and [PHASE_18.md](./docs/PHASE_18.md). DNS, certificates and deployment credentials
+are supplied by the operator; these examples do not deploy automatically.

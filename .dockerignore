@@ -1,0 +1,7 @@
+**
+!deploy/
+!deploy/docker/
+!deploy/docker/relay.Dockerfile
+!dist/
+!dist/releases/
+!dist/releases/**

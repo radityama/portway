@@ -515,6 +515,13 @@ protocol, forwarding, reconnect, generation and shutdown invariants. See
 [PHASE_17.md](./PHASE_17.md) for the plan and verification. Release packaging and
 production deployment follow in Phase 18.
 
+## Phase 18 — Release and Self-Hosting
+
+Phase 18 implements the release/distribution sections below with six-platform
+versioned binaries, checksums/provenance, controlled installation and a concrete
+Linux self-hosting baseline. See [RELEASE.md](./RELEASE.md),
+[SELF_HOSTING.md](./SELF_HOSTING.md) and [PHASE_18.md](./PHASE_18.md).
+
 ## 21. Go Quality Gates
 
 For every networking change:

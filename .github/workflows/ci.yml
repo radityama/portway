@@ -59,3 +59,19 @@ jobs:
       - run: pnpm test:chaos
       - run: pnpm test:dashboard
       - run: pnpm test:bootstrap
+
+  release-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+          cache: false
+      - run: make setup
+      - run: node scripts/release.mjs --version v0.0.0-ci
+      - run: node --test scripts/tests/release-container.integration.mjs

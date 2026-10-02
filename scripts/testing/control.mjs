@@ -132,6 +132,9 @@ export async function runControlScenario(database) {
       API_STORAGE: database ? 'postgres' : 'memory',
       API_SEED_FILE: join(privateDir, 'control-seed.json'),
       API_CREDENTIAL_TTL_SECONDS: '3',
+      // Keep the fixture's drain within its 12-second revocation deadline.
+      RELAY_SHUTDOWN_TIMEOUT: '2s',
+      PORTWAY_SHUTDOWN_TIMEOUT: '2s',
       PUBLIC_BASE_DOMAIN: 'portway.localhost',
       RELAY_PORT: String(relayPort),
       PUBLIC_PORT: String(publicPort),

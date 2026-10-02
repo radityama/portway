@@ -131,7 +131,12 @@ func (s *Session) forwardHTTP(stream *mux.Stream, open protocol.OpenStream, addr
 	defer func() { conn.Close(); stream.Close(); <-uploaded }()
 	response, err := httpwire.ReadResponse(bufio.NewReader(conn), request)
 	if err != nil {
-		stream.Reset(protocol.StreamUnavailable)
+		code := protocol.StreamUnavailable
+		var timeout net.Error
+		if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
+			code = protocol.StreamTimeout
+		}
+		stream.Reset(code)
 		return
 	}
 	defer func() { conn.Close(); response.Body.Close() }()

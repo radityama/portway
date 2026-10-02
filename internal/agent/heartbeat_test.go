@@ -16,7 +16,7 @@ import (
 )
 
 func TestRegisteredAgentWaitHandlesHeartbeatOverTLS(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
 	if err := devsetup.Ensure(dir, false); err != nil {
 		t.Fatal(err)
 	}

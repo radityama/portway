@@ -28,7 +28,7 @@ func cliFixture(t *testing.T) (config.Lookup, string) {
 
 func cliRelayFixture(t *testing.T, configure ...func(*relay.Server)) (config.Lookup, string, *relay.Server) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
 	if err := devsetup.Ensure(dir, false); err != nil {
 		t.Fatal(err)
 	}

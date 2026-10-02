@@ -27,7 +27,7 @@ func TestHTTPRegistrationRequiresBothStreamCapabilities(t *testing.T) {
 func TestAgentRejectsHostileRegistrationResponses(t *testing.T) {
 	for _, kind := range []string{"wrong tunnel", "wrong connection", "wrong generation", "unsafe hostname", "unexpected header", "truncated", "disappeared", "timeout", "cancel"} {
 		t.Run(kind, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := filepath.Join(t.TempDir(), "private")
 			if err := devsetup.Ensure(dir, false); err != nil {
 				t.Fatal(err)
 			}

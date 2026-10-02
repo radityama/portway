@@ -4,6 +4,10 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
+Implementation covers Phases 0–18. Phase 19 adds portable CI and deployment/release
+acceptance checks; see [Phase 19](./docs/PHASE_19.md) for verification status and
+[deployment acceptance](./docs/ACCEPTANCE.md) for staging requirements.
+
 Phases 0–16 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. Custom domains now use DNS TXT ownership proofs, current-generation relay aliases and reloadable certificates with local issuance and renewal. The dashboard now provides scoped login, overview, tunnel and domain management, read-only relay health and account settings with encrypted HttpOnly sessions. Phase 14 adds structured request logs, local Prometheus scrapes and bounded, generation-scoped traffic observations. Phases 15–16 add adversarial security coverage, bounded load profiles, isolated TCP impairment and reconnect storms.
 
 See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Phase 12](./docs/PHASE_12.md), [Phase 13](./docs/PHASE_13.md), [Phase 14](./docs/PHASE_14.md), [Phase 15](./docs/PHASE_15.md), [Phase 16](./docs/PHASE_16.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
@@ -146,7 +150,7 @@ pnpm test:bootstrap
 
 Stop the development stack before running production builds; Next.js uses the same `.next/` directory for both.
 
-Use `make fmt` to apply formatting. `make doctor` checks development tooling; this is separate from the future `portway doctor` product command.
+Use `make fmt` to apply formatting. `make doctor` checks development tooling; `portway doctor` checks CLI/API/relay configuration.
 
 Build outputs are `bin/portway`, `bin/portway-relay`, API/shared-package `dist/` directories, and the dashboard `.next/` directory. `make docker-up` and `make docker-down` manage just the development dependencies. Checked-in migrations, database integration, bounded load and fleet failover tests are implemented; production capacity and longer soaks remain operational work.
 
@@ -547,3 +551,17 @@ dropped capabilities and bounded resources, including real HTTPS forwarding.
 See [RELEASE.md](./docs/RELEASE.md), [SELF_HOSTING.md](./docs/SELF_HOSTING.md)
 and [PHASE_18.md](./docs/PHASE_18.md). DNS, certificates and deployment credentials
 are supplied by the operator; these examples do not deploy automatically.
+
+## Deployment acceptance (Phase 19)
+
+`make deployment-integration` checks API restart, idempotent migrations, a real
+PostgreSQL backup restored into a separate fixture database, and sustained HTTPS
+forwarding with bounded resources. `PORTWAY_SOAK_SECONDS=120 make deployment-integration`
+runs a longer isolated profile; default CI checks use ten seconds.
+
+CI runs Go tests/race/fuzz under both normal/private umasks and native installer
+checks on Linux/macOS/Windows. The Release workflow supports manual validation
+without draft-release publication. See [ACCEPTANCE.md](./docs/ACCEPTANCE.md) and
+[PHASE_19.md](./docs/PHASE_19.md) for actual verification and operator staging
+requirements. Green CI and deployment-specific evidence are required before
+declaring a production release ready.

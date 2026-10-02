@@ -13,7 +13,7 @@ import (
 )
 
 func TestDevelopmentCredentialsArePrivateAndIdempotent(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
 	if err := Ensure(dir, false); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,10 @@ func TestDevelopmentCredentialsArePrivateAndIdempotent(t *testing.T) {
 	}
 }
 func TestPartialSetupRequiresExplicitRotation(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "agent-token"), []byte("preserve"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -76,5 +79,38 @@ func TestPartialSetupRequiresExplicitRotation(t *testing.T) {
 	}
 	if err := Ensure(dir, true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUnsafeExistingDirectoryIsRejectedWithoutChanges(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory permission boundary")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "agent-token")
+	if err := os.WriteFile(path, []byte("preserve"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, ensure := range []func(string, bool) error{Ensure, EnsurePublic} {
+		for _, force := range []bool{false, true} {
+			if err := ensure(dir, force); err != ErrSetup {
+				t.Fatal("unsafe existing directory was accepted", err)
+			}
+		}
+	}
+	info, err := os.Stat(dir)
+	if err != nil || info.Mode().Perm() != 0755 {
+		t.Fatal("existing directory permissions were changed", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "preserve" {
+		t.Fatal("existing credential was changed", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "agent-token" {
+		t.Fatal("unsafe setup created files", err)
 	}
 }

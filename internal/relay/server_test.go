@@ -35,7 +35,7 @@ type fixture struct {
 
 func setup(t *testing.T, configure func(*relay.Server, []auth.Record)) *fixture {
 	t.Helper()
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
 	if err := devsetup.Ensure(dir, false); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestInvalidExpiredAndRevokedCredentials(t *testing.T) {
 
 func TestUntrustedCertificateAndHostname(t *testing.T) {
 	f := setup(t, nil)
-	other := t.TempDir()
+	other := filepath.Join(t.TempDir(), "private")
 	if err := devsetup.Ensure(other, false); err != nil {
 		t.Fatal(err)
 	}

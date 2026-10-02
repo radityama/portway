@@ -3,18 +3,28 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to validate without publishing a release
+        required: true
+        default: v0.0.0-validation
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   binaries:
-    needs: windows-installer
+    needs: native-installers
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
       id-token: write
       attestations: write
+    env:
+      PORTWAY_RELEASE_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -32,51 +42,25 @@ jobs:
       - run: make fuzz FUZZTIME=5s
       - run: pnpm test:bootstrap
       - run: pnpm test:release-container
-      - name: Build exact tagged source
-        env:
-          PORTWAY_RELEASE_VERSION: ${{ github.ref_name }}
+      - run: pnpm test:deployment
+      - name: Build exact reviewed source
         run: node scripts/release.mjs --version "$PORTWAY_RELEASE_VERSION"
       - uses: actions/attest-build-provenance@v2
+        if: github.event_name == 'push'
         with:
-          subject-path: dist/releases/${{ github.ref_name }}/*
+          subject-path: dist/releases/${{ env.PORTWAY_RELEASE_VERSION }}/*
       - uses: actions/upload-artifact@v4
         with:
-          name: portway-${{ github.ref_name }}
-          path: dist/releases/${{ github.ref_name }}/*
+          name: portway-${{ env.PORTWAY_RELEASE_VERSION }}
+          path: dist/releases/${{ env.PORTWAY_RELEASE_VERSION }}/*
           if-no-files-found: error
       - name: Create reviewable draft release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-          PORTWAY_RELEASE_VERSION: ${{ github.ref_name }}
         run: gh release create "$PORTWAY_RELEASE_VERSION" dist/releases/"$PORTWAY_RELEASE_VERSION"/* --verify-tag --draft --generate-notes --title "Portway $PORTWAY_RELEASE_VERSION"
 
-  windows-installer:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: .go-version
-          cache: false
-      - name: Build native Windows assets
-        env:
-          PORTWAY_RELEASE_VERSION: ${{ github.ref_name }}
-        run: node scripts/release.mjs --version "$env:PORTWAY_RELEASE_VERSION" --targets windows/amd64
-      - name: Verify offline installation and tamper rejection
-        env:
-          PORTWAY_RELEASE_VERSION: ${{ github.ref_name }}
-        shell: pwsh
-        run: |
-          $assets = Join-Path $PWD "dist/releases/$env:PORTWAY_RELEASE_VERSION"
-          $destination = Join-Path $env:RUNNER_TEMP 'portway-installer-test'
-          ./install/install.ps1 -Version $env:PORTWAY_RELEASE_VERSION -Directory $destination -AssetsDirectory $assets
-          $stamp = (& "$destination/portway.exe" version --json | ConvertFrom-Json).data
-          if ($stamp.version -ne $env:PORTWAY_RELEASE_VERSION) { throw 'Wrong installed version' }
-          $original = (Get-FileHash "$destination/portway.exe").Hash
-          Set-Content (Join-Path $assets "portway_$($env:PORTWAY_RELEASE_VERSION)_windows_amd64.exe") 'corrupted'
-          $rejected = $false
-          try { ./install/install.ps1 -Version $env:PORTWAY_RELEASE_VERSION -Directory $destination -AssetsDirectory $assets } catch { $rejected = $true }
-          if (!$rejected -or (Get-FileHash "$destination/portway.exe").Hash -ne $original) { throw 'Tamper verification failed' }
+  native-installers:
+    uses: ./.github/workflows/native-installers.yml
+    with:
+      version: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}

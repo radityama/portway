@@ -1,0 +1,33 @@
+name: Native installers
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Verify native install, atomic replacement and tamper rejection
+        env:
+          PORTWAY_TEST_RELEASE_VERSION: ${{ inputs.version }}
+        run: node --test scripts/tests/native-installer.integration.mjs

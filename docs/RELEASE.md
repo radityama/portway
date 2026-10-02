@@ -21,7 +21,10 @@ their manifest identifies dirty source and they are not publication candidates.
 
 `.github/workflows/release.yml` validates a release tag, runs checks, builds all
 targets, attests the exact binaries/manifest/checksums using GitHub OIDC, and
-uploads a **draft** release. Review verification evidence and provenance before
+uploads a **draft** release for tag-triggered runs. Manual workflow dispatch
+accepts an explicit version and validates/builds without attesting or creating a
+release. Both paths require native installer acceptance on Linux/macOS/Windows.
+Review verification evidence and provenance before
 publishing the draft. The workflow grants release/attestation permissions only
 to that job. This implementation does not create a tag or release remotely.
 
@@ -53,3 +56,6 @@ for independently verified/offline assets; all checksum checks still apply.
 See [SELF_HOSTING.md](./SELF_HOSTING.md) for deployment and rollback. Release
 assets currently distribute Go binaries; API/dashboard use the locked source
 workspace and pinned Node/pnpm on the control host.
+
+See [ACCEPTANCE.md](./ACCEPTANCE.md) for Phase 19 validation commands and the
+required staging evidence before publication.

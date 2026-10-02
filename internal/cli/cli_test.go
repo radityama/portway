@@ -81,7 +81,10 @@ func TestSavedSessionDestinationExpiryAndPrivateState(t *testing.T) {
 	}
 }
 func TestPrivateSymlinkPermissionsBoundsAndLock(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, "state")
 	if err := os.WriteFile(path, []byte("secret"), 0644); err != nil {
 		t.Fatal(err)
@@ -190,7 +193,7 @@ func TestDiscoveryManagersPrecedenceAmbiguityAndCancellation(t *testing.T) {
 	}
 }
 func TestRuntimeOwnershipStopStaleAndJoinedShutdown(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	r, err := StartRuntime(ctx, dir, "tnl_test", 3000, cancel)
@@ -266,7 +269,7 @@ func TestRuntimeOwnershipStopStaleAndJoinedShutdown(t *testing.T) {
 	}
 }
 func TestRuntimeSlowPeerAndAdmissionRecovery(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
 	r, err := StartRuntime(context.Background(), dir, "tnl_slow", 3000, func() {})
 	if err != nil {
 		t.Fatal(err)

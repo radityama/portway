@@ -135,3 +135,6 @@ Single-relay restarts interrupt service and same-ID replacement can wait for the
 can continue through API/database outages only within their documented leases.
 The local checks are release/runtime regression evidence, not an Internet-facing
 deployment certification or a long capacity soak.
+
+Run the isolated Phase 19 checks and record the actual operator deployment evidence
+in [ACCEPTANCE.md](./ACCEPTANCE.md) before inviting users.

@@ -10,6 +10,13 @@ on:
 jobs:
   go:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        umask: ['0022', '0077']
+    env:
+      PORTWAY_TEST_UMASK: ${{ matrix.umask }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -17,14 +24,21 @@ jobs:
           go-version-file: .go-version
           cache: false
       - run: node scripts/check-go-format.mjs
-      - run: go test ./...
-      - run: go test -race ./...
-      - run: make fuzz FUZZTIME=5s
+      - run: |
+          umask "$PORTWAY_TEST_UMASK"
+          go test -count=1 ./...
+      - run: |
+          umask "$PORTWAY_TEST_UMASK"
+          go test -race -count=1 ./...
+      - run: |
+          umask "$PORTWAY_TEST_UMASK"
+          make fuzz FUZZTIME=5s
       - run: go vet ./...
       - run: go build ./...
 
   node:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -59,9 +73,16 @@ jobs:
       - run: pnpm test:chaos
       - run: pnpm test:dashboard
       - run: pnpm test:bootstrap
+      - run: pnpm test:deployment
+
+  native-installers:
+    uses: ./.github/workflows/native-installers.yml
+    with:
+      version: v0.0.0-ci-native
 
   release-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

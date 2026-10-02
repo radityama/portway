@@ -64,7 +64,14 @@ build:
 	go build -o bin/portway-cert ./cmd/certctl
 	pnpm build
 
-check: fmt-check test test-race lint typecheck build control-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration security-integration load-test chaos-test cli-integration
+check: fmt-check test test-race lint typecheck build control-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration security-integration load-test chaos-test cli-integration deployment-integration
+
+.PHONY: deployment-integration native-installer
+deployment-integration: build
+	pnpm test:deployment
+
+native-installer:
+	pnpm test:native-installer
 
 cli-integration: build
 	pnpm test:cli

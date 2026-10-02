@@ -522,6 +522,15 @@ versioned binaries, checksums/provenance, controlled installation and a concrete
 Linux self-hosting baseline. See [RELEASE.md](./RELEASE.md),
 [SELF_HOSTING.md](./SELF_HOSTING.md) and [PHASE_18.md](./PHASE_18.md).
 
+## Phase 19 — Deployment Acceptance and Release Validation
+
+Validate portable Go fixtures under normal/private umasks, native installers on
+Linux/macOS/Windows, clean release workflow execution and isolated deployment
+restart/backup restore/sustained traffic. Hosted CI must pass for the pushed
+revision; real DNS/TLS, service activation, capacity and upgrade/rollback require
+operator staging evidence. See [PHASE_19.md](./PHASE_19.md) and
+[ACCEPTANCE.md](./ACCEPTANCE.md).
+
 ## 21. Go Quality Gates
 
 For every networking change:

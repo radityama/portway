@@ -9,7 +9,7 @@ import (
 )
 
 func TestPublicFixturesMigrateWithoutRotatingCredentials(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "private")
 	if err := Ensure(dir, false); err != nil {
 		t.Fatal(err)
 	}

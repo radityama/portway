@@ -54,5 +54,7 @@ jobs:
       - run: pnpm test:domains
       - run: pnpm test:observability
       - run: pnpm test:security
+      - run: pnpm test:load
+      - run: pnpm test:chaos
       - run: pnpm test:dashboard
       - run: pnpm test:bootstrap

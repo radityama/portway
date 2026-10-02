@@ -31,7 +31,9 @@
     "test:domains": "node --test scripts/tests/domains.integration.mjs",
     "test:dashboard": "node --test scripts/tests/dashboard.integration.mjs",
     "test:observability": "node --test scripts/tests/observability.integration.mjs",
-    "test:security": "node --test scripts/tests/security.integration.mjs"
+    "test:security": "node --test scripts/tests/security.integration.mjs",
+    "test:load": "node --test scripts/tests/load.integration.mjs",
+    "test:chaos": "node --test scripts/tests/chaos.integration.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

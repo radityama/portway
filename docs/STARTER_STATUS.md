@@ -82,7 +82,9 @@ Phases 9–10 add the scoped control API and durable PostgreSQL policy described
 below. Phase 11 adds live relay health, capacity and selection. Phase 12 adds DNS
 ownership, custom aliases and certificate lifecycle. Phase 13 adds the scoped
 browser dashboard. Phase 14 adds observability and Phase 15 adds security hardening.
-The next phase is Phase 16: load and chaos tests.
+Phase 16 adds bounded load and chaos regression tests. The planned implementation
+sequence now has executable coverage through Phase 16; production rollout still
+requires the documented ingress, certificate, capacity and operating work.
 
 ## What this starter contains
 
@@ -104,6 +106,7 @@ The next phase is Phase 16: load and chaos tests.
 - atomic wildcard/custom PEM reload and stable local CA issuance/renewal tooling
 - responsive scoped dashboard with encrypted HttpOnly sessions and role-aware forms
 - real Chromium dashboard tests covering DNS, tenant isolation and failure recovery
+- bounded load, stream saturation, TCP impairment and eight-agent failover tests
 - Docker Compose for PostgreSQL and Redis
 - CI quality gates and Docker-backed bootstrap verification
 - Codex/Claude Code instructions and master prompt
@@ -222,3 +225,16 @@ files now reject final-component symlinks and compare opened file identity; rela
 AUTH uses an explicit parent-role allowlist independently of database constraints.
 The threat model maps all twelve phase requirements to executable tests. See
 [PHASE_15.md](./PHASE_15.md) and [SECURITY.md](./SECURITY.md).
+
+## Phase 16
+
+Real-process profiles exercise all nine planned load/chaos scenarios with owned
+PostgreSQL/Redis and network fixtures. They check byte integrity at large-body
+boundaries, sustained concurrency, capacity recovery, cancellation without replay,
+API/Redis outage isolation and eight-agent reconnect storms across two relay
+crashes. Go race coverage adds 512 stream lifetimes with repeated credit reuse and
+stalled-consumer resets. Tests record local measurements and distinguish kernel
+netem from the packet-filter/bridge-delay fallback. Same-ID relay replacements
+remain fenced by the 15-second presence lease; under-ten-second failover requires
+a healthy alternative. See [PHASE_16.md](./PHASE_16.md) and
+[load test operations](../tests/load/README.md).

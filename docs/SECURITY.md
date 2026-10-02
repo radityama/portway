@@ -107,5 +107,7 @@ Revocation blocks future AUTH. Already admitted leases remain usable until local
 expiry, supersession, transport failure or shutdown; there is no active revocation
 push. Credential theft within that lease still requires rotation/revocation and
 operational response. This test suite is regression coverage for these boundaries,
-not a claim of an external penetration audit. Phase 16 will exercise infrastructure
-failures, sustained concurrency, packet loss and reconnect storms.
+not a claim of an external penetration audit. [Phase 16](./PHASE_16.md) exercises
+infrastructure failures, bounded sustained concurrency, real TCP loss and
+reconnect storms. Redis-dependent assignments fail without allocating credentials;
+stale relay incarnations drain; interrupted mutations are canceled without replay.

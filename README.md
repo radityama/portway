@@ -4,9 +4,9 @@ A path from your local port to the web. Portway is a self-hosted reverse-tunneli
 
 ## Current milestone
 
-Phases 0–15 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. Custom domains now use DNS TXT ownership proofs, current-generation relay aliases and reloadable certificates with local issuance and renewal. The dashboard now provides scoped login, overview, tunnel and domain management, read-only relay health and account settings with encrypted HttpOnly sessions. Phase 14 adds structured request logs, local Prometheus scrapes and bounded, generation-scoped traffic observations.
+Phases 0–16 provide a reproducible workspace, a validated v1 protocol, authenticated TLS connections, tunnel registration, and public HTTPS forwarding to a local HTTP service. The relay assigns hostnames, resolves active owners locally, and prevents stale generations from reclaiming tunnels. Requests and responses use bounded logical streams with independent byte-credit windows and a shared connection budget. Registered sessions use heartbeat; port invocations recover transient transport failures with backoff and fresh generations. Signals stop new work, let active streams drain, and force cleanup at a configurable shutdown deadline. Negotiated WebSocket upgrades preserve duplex frames, and SSE/chunked HTTP streams flush incrementally under application idle timeouts. The API implements scoped authentication, projects, tunnels, configured relays and short-lived credentials; the CLI can bootstrap through it. PostgreSQL now persists scoped policy, sessions, generation allocations, credentials, idempotency and audit history through transactional writes. Live relay reports now drive health/capacity selection, operator drain commands and CLI failover. Custom domains now use DNS TXT ownership proofs, current-generation relay aliases and reloadable certificates with local issuance and renewal. The dashboard now provides scoped login, overview, tunnel and domain management, read-only relay health and account settings with encrypted HttpOnly sessions. Phase 14 adds structured request logs, local Prometheus scrapes and bounded, generation-scoped traffic observations. Phases 15–16 add adversarial security coverage, bounded load profiles, isolated TCP impairment and reconnect storms.
 
-See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Phase 12](./docs/PHASE_12.md), [Phase 13](./docs/PHASE_13.md), [Phase 14](./docs/PHASE_14.md), [Phase 15](./docs/PHASE_15.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
+See [Phase 0](./docs/PHASE_0.md), [Phase 1](./docs/PHASE_1.md), [Phase 2](./docs/PHASE_2.md), [Phase 3](./docs/PHASE_3.md), [Phase 4](./docs/PHASE_4.md), [Phase 5](./docs/PHASE_5.md), [Phase 6](./docs/PHASE_6.md), [Phase 7](./docs/PHASE_7.md), [Phase 8](./docs/PHASE_8.md), [Phase 9](./docs/PHASE_9.md), [Phase 10](./docs/PHASE_10.md), [Phase 11](./docs/PHASE_11.md), [Phase 12](./docs/PHASE_12.md), [Phase 13](./docs/PHASE_13.md), [Phase 14](./docs/PHASE_14.md), [Phase 15](./docs/PHASE_15.md), [Phase 16](./docs/PHASE_16.md), [Starter Status](./docs/STARTER_STATUS.md), and the canonical [implementation phases](./docs/IMPLEMENTATION.md).
 
 ## Prerequisites
 
@@ -148,7 +148,7 @@ Stop the development stack before running production builds; Next.js uses the sa
 
 Use `make fmt` to apply formatting. `make doctor` checks development tooling; this is separate from the future `portway doctor` product command.
 
-Build outputs are `bin/portway`, `bin/portway-relay`, API/shared-package `dist/` directories, and the dashboard `.next/` directory. `make docker-up` and `make docker-down` manage just the development dependencies. Checked-in migrations and database integration tests are implemented; broader fleet/load testing remains later work.
+Build outputs are `bin/portway`, `bin/portway-relay`, API/shared-package `dist/` directories, and the dashboard `.next/` directory. `make docker-up` and `make docker-down` manage just the development dependencies. Checked-in migrations, database integration, bounded load and fleet failover tests are implemented; production capacity and longer soaks remain operational work.
 
 ## Repository and contracts
 
@@ -484,3 +484,22 @@ hostname/SNI injection, hostile upstream headers, slow peers, capacity recovery,
 tenant/viewer/operator boundaries and parent revocation. Public application
 authentication and active revocation semantics retain their documented limits.
 See [Phase 15](./docs/PHASE_15.md) for implementation and verification details.
+
+## Load and chaos tests (Phase 16)
+
+`make load-test` verifies 256 mixed requests, 16 MiB known/chunked uploads, a
+64 MiB streamed response and saturation/recovery at 32 streams. `make chaos-test`
+checks real TCP loss, latency spikes, API/Redis outages, agent crash cancellation
+and eight-agent reconnect storms across two relay crashes. Both run in `make check`
+and CI; standalone `pnpm test:load`/`pnpm test:chaos` require `make build` first.
+
+Chaos uses `NET_ADMIN` only in its owned Docker namespace. It prefers netem;
+kernels without it use real packet filtering plus bridge delivery delay, explicitly
+recorded in results. Missing capabilities fail the test. Throughput/latency and
+resource measurements are written to ignored `.tmp/load/phase16-*.json` after
+successful profiles and represent bounded local correctness checks.
+
+Failover under ten seconds requires a healthy alternative relay. Replacing the
+same relay ID remains fenced until its 15-second presence lease expires. See
+[Phase 16](./docs/PHASE_16.md) and [test operations](./tests/load/README.md) for
+profiles, cleanup, prerequisites and operating limits.

@@ -495,6 +495,16 @@ reconnect storms
 
 The system should fail closed for security and recover for transient infrastructure problems.
 
+Phase 16 implements bounded real-process load and chaos profiles for all nine
+scenarios. Stream churn also runs under Go's race detector. Network impairment
+uses an owned Docker namespace with netem or explicit packet-filter/bridge-delay
+fallback. Tests verify byte integrity, reusable stream credit/admission, outage
+isolation, canceled mutations without replay, fenced incarnations and simultaneous
+failover with higher generations. `make load-test` and `make chaos-test` run through
+`make check` and CI. Results are local correctness measurements, not a production
+capacity claim. See [PHASE_16.md](./PHASE_16.md) and
+[load test operations](../tests/load/README.md).
+
 ## 21. Go Quality Gates
 
 For every networking change:
@@ -580,6 +590,7 @@ make build
 make integration
 make e2e
 make load-test
+make chaos-test
 make docker-up
 make docker-down
 ```

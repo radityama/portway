@@ -1,4 +1,4 @@
-.PHONY: setup dev dev-credentials doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check control-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration security-integration integration e2e load-test
+.PHONY: setup dev dev-credentials doctor docker-up docker-down test test-race fuzz lint fmt fmt-check typecheck build check control-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration security-integration integration e2e load-test chaos-test
 
 FUZZTIME ?= 10s
 
@@ -57,7 +57,7 @@ build:
 	go build -o bin/portway-cert ./cmd/certctl
 	pnpm build
 
-check: fmt-check test test-race lint typecheck build control-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration security-integration
+check: fmt-check test test-race lint typecheck build control-integration database-integration fleet-integration domain-integration dashboard-integration observability-integration security-integration load-test chaos-test
 
 control-integration: build
 	pnpm test:control
@@ -90,5 +90,10 @@ integration:
 e2e:
 	go test ./tests/e2e/...
 
-load-test:
-	go test ./tests/load/...
+load-test: build
+	go test -race ./internal/mux -run '^TestLoad'
+	pnpm test:load
+
+chaos-test: build
+	go test -race ./tests/load/netem
+	pnpm test:chaos

@@ -56,6 +56,9 @@ try {
   if ($checksumLines.Count -ne 1) { throw 'Missing or duplicate artifact checksum' }
   $binary = Fetch $asset 104857600
   if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $checksumLines[0].Substring(0,64)) { throw 'Artifact checksum mismatch' }
-  if (Test-Path -LiteralPath $target) { [System.IO.File]::Replace($binary,$target,$null) } else { [System.IO.File]::Move($binary,$target) }
+  if (Test-Path -LiteralPath $target) {
+    $backup = Join-Path $stage 'portway-backup.exe'
+    [System.IO.File]::Replace($binary,$target,$backup)
+  } else { [System.IO.File]::Move($binary,$target) }
   Write-Output "Installed Portway $Version at $target"
 } finally { Remove-Item -LiteralPath $stage -Recurse -Force }
